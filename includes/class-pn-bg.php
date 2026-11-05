@@ -676,6 +676,23 @@ final class PN_BG {
 		echo '<button type="submit" class="' . esc_attr( $class ) . '">' . esc_html( $label ) . '</button></form>';
 	}
 
+	private static function update_line( $up ) {
+		$f = function ( $t ) {
+			return get_date_from_gmt( $t, 'd/m/Y H:i' );
+		};
+		$l = array();
+		$c = $up['check'];
+		if ( ! empty( $c['em'] ) ) {
+			$l[] = 'Última consulta ao GitHub: ' . $f( $c['em'] ) . ( ! empty( $c['ok'] ) ? ' (ok)' : ' (falhou: ' . esc_html( $c['erro'] ) . ')' );
+		} else {
+			$l[] = 'Ainda não consultou o GitHub. Clique em "Verificar atualização".';
+		}
+		if ( ! empty( $up['ver_at'] ) ) {
+			$l[] = 'Versão ' . esc_html( PN_Pedidos_Nuvemshop::VERSION ) . ' em uso desde ' . $f( $up['ver_at'] ) . ( $up['ver_prev'] ? ' (veio da ' . esc_html( $up['ver_prev'] ) . ')' : '' );
+		}
+		return '<p class="description">' . implode( '<br>', $l ) . '</p>';
+	}
+
 	public static function render_page() {
 		if ( ! current_user_can( 'manage_options' ) ) {
 			wp_die( 'Sem permissão.' );
@@ -732,6 +749,10 @@ final class PN_BG {
 		self::postform( 'pn_bg_sync', 'pn_bg_sync', 'Sincronizar agora' );
 		self::postform( 'pn_gate_lock', 'pn_gate_lock', 'Bloquear painel' );
 		echo '</div>';
+
+		if ( 0 === strpos( $conn['texto'], 'Falta' ) ) {
+			echo '<div class="notice notice-warning inline"><p><strong>Por isso a sincronização não roda:</strong> ' . esc_html( $conn['texto'] ) . '. Role até "Conexão com a Nuvemshop", cole o token e clique em "Salvar e testar conexão".</p></div>';
+		}
 
 		// 1. Resumo.
 		self::section( 'Resumo de vendas (pedidos pagos)' );
@@ -791,7 +812,7 @@ final class PN_BG {
 			echo '<option value="' . esc_attr( $k ) . '"' . selected( $c['egestor_modo'], $k, false ) . '>' . esc_html( $lab ) . '</option>';
 		}
 		echo '</select><p class="description">Credencial do eGestor: ' . ( PN_EGestor::has_credentials() ? 'definida' : 'não definida' ) . '. Comece em "Simulado".</p></td></tr>';
-		echo '<tr><th>Repositório de atualizações</th><td><input type="text" class="regular-text" name="pn_update_repo" value="' . esc_attr( (string) get_option( PN_Updater::OPT_REPO, '' ) ) . '" placeholder="dono/repositorio"' . ( ( defined( 'PN_UPDATE_REPO' ) && PN_UPDATE_REPO ) ? ' disabled' : '' ) . '><p class="description">Versão instalada: ' . esc_html( PN_Pedidos_Nuvemshop::VERSION ) . ( $up['latest'] ? ' · última publicada: ' . esc_html( $up['latest'] ) : '' ) . '</p></td></tr>';
+		echo '<tr><th>Repositório de atualizações</th><td><input type="text" class="regular-text" name="pn_update_repo" value="' . esc_attr( (string) get_option( PN_Updater::OPT_REPO, '' ) ) . '" placeholder="dono/repositorio"' . ( ( defined( 'PN_UPDATE_REPO' ) && PN_UPDATE_REPO ) ? ' disabled' : '' ) . '><p class="description">Versão instalada: ' . esc_html( PN_Pedidos_Nuvemshop::VERSION ) . ( $up['latest'] ? ' · última publicada: ' . esc_html( $up['latest'] ) : '' ) . '</p>' . self::update_line( $up ) . '</td></tr>';
 		echo '</table>';
 		echo '<details style="margin:0 0 12px"><summary style="cursor:pointer">Avançado (identificação do produto)</summary><table class="form-table" role="presentation">';
 		echo '<tr><th>Produto Brasil Gigante</th><td>ID do produto <input type="text" size="12" name="pn_bg[product_id]" value="' . esc_attr( $c['product_id'] ) . '"> ID da variação <input type="text" size="12" name="pn_bg[variant_id]" value="' . esc_attr( $c['variant_id'] ) . '"> SKU <input type="text" size="24" name="pn_bg[sku]" value="' . esc_attr( $c['sku'] ) . '"></td></tr>';

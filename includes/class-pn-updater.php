@@ -97,7 +97,9 @@ final class PN_Updater {
 			'https://api.github.com/repos/' . $this->repo . '/releases/latest',
 			array( 'timeout' => 15, 'headers' => $this->headers() )
 		);
-		if ( is_wp_error( $resp ) || 200 !== (int) wp_remote_retrieve_response_code( $resp ) ) {
+		$ok_http = ! is_wp_error( $resp ) && 200 === (int) wp_remote_retrieve_response_code( $resp );
+		update_option( 'pn_update_check', array( 'em' => gmdate( 'Y-m-d H:i:s' ), 'ok' => $ok_http, 'erro' => $ok_http ? '' : ( is_wp_error( $resp ) ? $resp->get_error_message() : 'HTTP ' . (int) wp_remote_retrieve_response_code( $resp ) ) ), false );
+		if ( ! $ok_http ) {
 			// Guarda o "vazio" por pouco tempo para não consultar a cada página.
 			set_site_transient( self::CACHE_KEY, array( 'version' => '', 'erro' => is_wp_error( $resp ) ? $resp->get_error_message() : 'HTTP ' . (int) wp_remote_retrieve_response_code( $resp ) ), 15 * MINUTE_IN_SECONDS );
 			return null;
@@ -243,6 +245,9 @@ final class PN_Updater {
 			'latest'  => ( is_array( $c ) && ! empty( $c['version'] ) ) ? $c['version'] : '',
 			'erro'    => ( is_array( $c ) && ! empty( $c['erro'] ) ) ? $c['erro'] : '',
 			'private' => ( defined( 'PN_UPDATE_TOKEN' ) && PN_UPDATE_TOKEN ),
+			'check'   => get_option( 'pn_update_check', array() ),
+			'ver_at'  => (string) get_option( 'pn_ver_at', '' ),
+			'ver_prev' => (string) get_option( 'pn_ver_prev', '' ),
 		);
 	}
 }

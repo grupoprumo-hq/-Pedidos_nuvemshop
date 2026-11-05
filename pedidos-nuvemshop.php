@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       Pedidos Nuvemshop
  * Description:       Painel exclusivo do Café Brasil Gigante: lê somente os pedidos do produto (vendas e envios), avisa pedido pago e prepara a venda e a NF-e no eGestor. Acesso protegido por senha.
- * Version:           3.2.5
+ * Version:           3.2.6
  * Requires at least: 5.8
  * Requires PHP:      7.4
  * Author:            Café Zé Velho
@@ -21,7 +21,7 @@ require_once __DIR__ . '/includes/class-pn-bg.php';
 
 final class PN_Pedidos_Nuvemshop {
 
-	const VERSION      = '3.2.5';
+	const VERSION      = '3.2.6';
 	const DB_VERSION   = '4';
 	const OPT_SETTINGS = 'pn_settings';
 	const OPT_STATE    = 'pn_state3';
@@ -141,6 +141,11 @@ final class PN_Pedidos_Nuvemshop {
 			}
 			self::create_tables();
 		}
+		if ( get_option( 'pn_ver_seen' ) !== self::VERSION ) {
+			update_option( 'pn_ver_prev', (string) get_option( 'pn_ver_seen', '' ), false );
+			update_option( 'pn_ver_seen', self::VERSION, false );
+			update_option( 'pn_ver_at', gmdate( 'Y-m-d H:i:s' ), false );
+		}
 		if ( ! wp_next_scheduled( self::CRON_HOOK ) ) {
 			wp_schedule_event( time() + 120, 'pn_30min', self::CRON_HOOK );
 		}
@@ -239,8 +244,11 @@ final class PN_Pedidos_Nuvemshop {
 
 	public function bg_connection_status() {
 		$caps = get_option( self::OPT_CAPS, array() );
-		if ( '' === $this->get_token() || '' === $this->get_store_id() ) {
-			return array( 'ok' => false, 'texto' => 'Não conectado' );
+		if ( '' === $this->get_store_id() ) {
+			return array( 'ok' => false, 'texto' => 'Falta o ID da loja' );
+		}
+		if ( '' === $this->get_token() ) {
+			return array( 'ok' => false, 'texto' => 'Falta o token da Nuvemshop' );
 		}
 		if ( empty( $caps['testado_em'] ) ) {
 			return array( 'ok' => false, 'texto' => 'Ainda não testado' );
