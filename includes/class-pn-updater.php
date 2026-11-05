@@ -221,11 +221,12 @@ final class PN_Updater {
 		if ( ! current_user_can( 'update_plugins' ) ) {
 			wp_die( 'Sem permissão.' );
 		}
+		PN_Gate::require_unlocked();
 		check_admin_referer( 'pn_check_update' );
 		delete_site_transient( self::CACHE_KEY );
 		delete_site_transient( 'update_plugins' );
 		wp_update_plugins();
-		wp_safe_redirect( admin_url( 'admin.php?page=pedidos-nuvemshop&tab=brasilgigante&pn_checked=1' ) );
+		wp_safe_redirect( admin_url( 'admin.php?page=pedidos-nuvemshop' ) );
 		exit;
 	}
 

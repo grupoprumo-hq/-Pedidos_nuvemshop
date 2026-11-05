@@ -30,6 +30,8 @@ final class PN_BG {
 			add_action( 'admin_post_pn_bg_save', array( __CLASS__, 'handle_save' ) );
 			add_action( 'admin_post_pn_bg_test', array( __CLASS__, 'handle_test' ) );
 			add_action( 'admin_post_pn_bg_resend', array( __CLASS__, 'handle_resend' ) );
+			add_action( 'admin_post_pn_bg_conn', array( __CLASS__, 'handle_conn' ) );
+			add_action( 'admin_post_pn_bg_sync', array( __CLASS__, 'handle_sync' ) );
 		}
 	}
 
@@ -39,9 +41,7 @@ final class PN_BG {
 
 	public static function cfg() {
 		$d = array(
-			'somente_bg'        => 1,
 			'avisos'            => 1,
-			'email_aviso'       => get_option( 'admin_email', '' ),
 			'webhook_url'       => '',
 			'email_teste'       => '',
 			'product_id'        => '378563445',
@@ -87,8 +87,7 @@ final class PN_BG {
 
 	/** Trava: com "somente Brasil Gigante" ligado (padrão), o plugin só guarda e processa pedidos com o produto. */
 	public static function only_bg() {
-		$c = self::cfg();
-		return ! empty( $c['somente_bg'] );
+		return true; // trava fixa: o plugin só trata o Brasil Gigante.
 	}
 
 	public static function order_has_bg( $o ) {
@@ -102,6 +101,10 @@ final class PN_BG {
 			}
 		}
 		return false;
+	}
+
+	public static function is_bg_line( array $it ) {
+		return self::is_bg_item( $it, self::cfg() );
 	}
 
 	private static function is_bg_item( array $it, array $c ) {
@@ -316,29 +319,23 @@ final class PN_BG {
 	 * Envio do aviso
 	 * ---------------------------------------------------------------- */
 
-	/** Retorna true se algum canal aceitou. */
+	/** Envia o aviso ao webhook (se houver). Sem webhook, o aviso fica só no painel e conta como entregue. */
 	private static function notify( $assunto, $texto, $payload = null ) {
-		$c  = self::cfg();
-		$ok = false;
-
-		if ( is_email( $c['email_aviso'] ) ) {
-			if ( wp_mail( $c['email_aviso'], $assunto, $texto ) ) {
-				$ok = true;
-			}
-		}
+		$c   = self::cfg();
 		$url = trim( (string) $c['webhook_url'] );
-		if ( '' !== $url && 0 === strpos( $url, 'https://' ) ) {
-			$corpo = wp_json_encode( array( 'assunto' => $assunto, 'texto' => $texto, 'dados' => $payload ) );
-			$h     = array( 'Content-Type' => 'application/json' );
-			if ( defined( 'PN_BG_WEBHOOK_SECRET' ) && PN_BG_WEBHOOK_SECRET ) {
-				$h['X-PN-Signature'] = hash_hmac( 'sha256', $corpo, (string) PN_BG_WEBHOOK_SECRET );
-			}
-			$r = wp_remote_post( $url, array( 'timeout' => 15, 'headers' => $h, 'body' => $corpo ) );
-			if ( ! is_wp_error( $r ) && (int) wp_remote_retrieve_response_code( $r ) < 300 ) {
-				$ok = true;
-			}
+		if ( '' === $url ) {
+			return true;
 		}
-		return $ok;
+		if ( 0 !== strpos( $url, 'https://' ) ) {
+			return false;
+		}
+		$corpo = wp_json_encode( array( 'assunto' => $assunto, 'texto' => $texto, 'dados' => $payload ) );
+		$h     = array( 'Content-Type' => 'application/json' );
+		if ( defined( 'PN_BG_WEBHOOK_SECRET' ) && PN_BG_WEBHOOK_SECRET ) {
+			$h['X-PN-Signature'] = hash_hmac( 'sha256', $corpo, (string) PN_BG_WEBHOOK_SECRET );
+		}
+		$r = wp_remote_post( $url, array( 'timeout' => 15, 'headers' => $h, 'body' => $corpo ) );
+		return ( ! is_wp_error( $r ) && (int) wp_remote_retrieve_response_code( $r ) < 300 );
 	}
 
 	/**
@@ -366,7 +363,7 @@ final class PN_BG {
 		$enviado = true;
 		if ( ! empty( $c['avisos'] ) ) {
 			$enviado = self::notify( '[Brasil Gigante] Novo pedido pago #' . $num . ( $p['pedido']['teste'] ? ' (TESTE)' : '' ), self::message( $p, $etapas ), $p );
-			self::log( $num, 'aviso', $enviado ? 'enviado' : 'FALHOU: nenhum canal aceitou (e-mail ou webhook)' );
+			self::log( $num, 'aviso', $enviado ? ( '' === trim( (string) $c['webhook_url'] ) ? 'registrado no painel' : 'enviado ao webhook' ) : 'FALHOU: o webhook não aceitou (tentará de novo)' );
 		}
 
 		if ( $enviado ) {
@@ -550,28 +547,47 @@ final class PN_BG {
 	}
 
 	/* ------------------------------------------------------------------
-	 * Telas e ações do painel
+	 * Painel (tudo protegido pela senha do painel)
 	 * ---------------------------------------------------------------- */
+
+	private static function guard() {
+		if ( ! current_user_can( 'manage_options' ) ) {
+			wp_die( 'Sem permissão.' );
+		}
+		PN_Gate::require_unlocked();
+	}
 
 	private static function back( $msg = '', $tipo = 'success' ) {
 		if ( '' !== $msg ) {
 			set_transient( 'pn_flash_' . get_current_user_id(), array( 'tipo' => $tipo, 'linhas' => array( $msg ) ), 5 * MINUTE_IN_SECONDS );
 		}
-		wp_safe_redirect( admin_url( 'admin.php?page=pedidos-nuvemshop&tab=brasilgigante' ) );
+		wp_safe_redirect( admin_url( 'admin.php?page=pedidos-nuvemshop' ) );
 		exit;
 	}
 
+	public static function handle_conn() {
+		self::guard();
+		check_admin_referer( 'pn_bg_conn' );
+		$sid = isset( $_POST['store_id'] ) ? (string) wp_unslash( $_POST['store_id'] ) : ''; // phpcs:ignore WordPress.Security.ValidatedSanitizedInput
+		$tok = isset( $_POST['token'] ) ? (string) wp_unslash( $_POST['token'] ) : ''; // phpcs:ignore WordPress.Security.ValidatedSanitizedInput
+		$r   = PN_Pedidos_Nuvemshop::instance()->bg_save_connection( $sid, $tok );
+		self::back( $r['msg'], $r['ok'] ? 'success' : 'error' );
+	}
+
+	public static function handle_sync() {
+		self::guard();
+		check_admin_referer( 'pn_bg_sync' );
+		$r = PN_Pedidos_Nuvemshop::instance()->bg_sync_now();
+		self::back( implode( ' ', $r['linhas'] ), $r['ok'] ? 'success' : 'error' );
+	}
+
 	public static function handle_save() {
-		if ( ! current_user_can( 'manage_options' ) ) {
-			wp_die( 'Sem permissão.' );
-		}
+		self::guard();
 		check_admin_referer( 'pn_bg_save' );
 		$in    = isset( $_POST['pn_bg'] ) ? wp_unslash( (array) $_POST['pn_bg'] ) : array(); // phpcs:ignore WordPress.Security.ValidatedSanitizedInput
 		$modos = self::modos();
 		$new   = array(
-			'somente_bg'         => empty( $in['somente_bg'] ) ? 0 : 1,
 			'avisos'             => empty( $in['avisos'] ) ? 0 : 1,
-			'email_aviso'        => sanitize_email( isset( $in['email_aviso'] ) ? $in['email_aviso'] : '' ),
 			'webhook_url'        => esc_url_raw( isset( $in['webhook_url'] ) ? trim( $in['webhook_url'] ) : '', array( 'https' ) ),
 			'email_teste'        => sanitize_email( isset( $in['email_teste'] ) ? $in['email_teste'] : '' ),
 			'product_id'         => preg_replace( '/\D/', '', isset( $in['product_id'] ) ? $in['product_id'] : '' ),
@@ -584,16 +600,15 @@ final class PN_BG {
 		update_option( self::OPT_CFG, $new, false );
 
 		$repo = isset( $_POST['pn_update_repo'] ) ? trim( sanitize_text_field( wp_unslash( $_POST['pn_update_repo'] ) ) ) : ''; // phpcs:ignore WordPress.Security.NonceVerification
-		update_option( PN_Updater::OPT_REPO, preg_match( '#^[A-Za-z0-9_.\-]+/[A-Za-z0-9_.\-]+$#', $repo ) ? $repo : '', false );
-		delete_site_transient( PN_Updater::CACHE_KEY );
-
-		self::back( 'Configuração do Brasil Gigante salva.' );
+		if ( ! ( defined( 'PN_UPDATE_REPO' ) && PN_UPDATE_REPO ) ) {
+			update_option( PN_Updater::OPT_REPO, preg_match( '#^[A-Za-z0-9_.\-]+/[A-Za-z0-9_.\-]+$#', $repo ) ? $repo : '', false );
+			delete_site_transient( PN_Updater::CACHE_KEY );
+		}
+		self::back( 'Configurações salvas.' );
 	}
 
 	public static function handle_test() {
-		if ( ! current_user_can( 'manage_options' ) ) {
-			wp_die( 'Sem permissão.' );
-		}
+		self::guard();
 		check_admin_referer( 'pn_bg_test' );
 		$c = self::cfg();
 		$o = array(
@@ -606,20 +621,22 @@ final class PN_BG {
 			'discount' => '0.00',
 			'total'    => '107.70',
 			'shipping_option' => 'Jadlog Econômico',
-			'customer' => array( 'name' => 'Cliente de Teste', 'email' => $c['email_teste'] ? $c['email_teste'] : 'teste@exemplo.com', 'phone' => '+5511999999999', 'identification' => '00000000000' ),
+			'customer' => array( 'name' => 'Cliente de Teste', 'email' => 'teste@exemplo.com', 'phone' => '+5511999999999', 'identification' => '00000000000' ),
 			'shipping_address' => array( 'zipcode' => '30575360', 'address' => 'Rua de Teste', 'number' => '1', 'locality' => 'Centro', 'city' => 'Belo Horizonte', 'province' => 'MG' ),
 		);
-		$p  = self::payload( $o );
+		$p                    = self::payload( $o );
 		$p['pedido']['teste'] = true;
-		$ok = self::notify( '[Brasil Gigante] TESTE de aviso', self::message( $p, array( 'Teste manual: nenhuma venda foi criada no eGestor.' ) ), $p );
-		self::log( 'TESTE', 'aviso_teste', $ok ? 'enviado' : 'FALHOU: nenhum canal aceitou' );
-		self::back( $ok ? 'Aviso de teste enviado.' : 'O aviso de teste não foi aceito por nenhum canal. Confira o e-mail e o endereço do webhook.', $ok ? 'success' : 'error' );
+		$tem_webhook          = '' !== trim( (string) $c['webhook_url'] );
+		$ok                   = self::notify( '[Brasil Gigante] TESTE de aviso', self::message( $p, array( 'Teste manual: nenhuma venda foi criada no eGestor.' ) ), $p );
+		self::log( 'TESTE', 'aviso_teste', $tem_webhook ? ( $ok ? 'enviado ao webhook' : 'FALHOU: o webhook não aceitou' ) : 'sem webhook: o aviso fica só no painel' );
+		if ( ! $tem_webhook ) {
+			self::back( 'Sem webhook configurado: os avisos aparecem apenas no painel.', 'success' );
+		}
+		self::back( $ok ? 'Aviso de teste enviado ao webhook.' : 'O webhook não aceitou o teste. Confira o endereço.', $ok ? 'success' : 'error' );
 	}
 
 	public static function handle_resend() {
-		if ( ! current_user_can( 'manage_options' ) ) {
-			wp_die( 'Sem permissão.' );
-		}
+		self::guard();
 		check_admin_referer( 'pn_bg_resend' );
 		$num = isset( $_POST['pn_num'] ) ? preg_replace( '/\D/', '', wp_unslash( $_POST['pn_num'] ) ) : ''; // phpcs:ignore WordPress.Security.ValidatedSanitizedInput
 		if ( '' === $num ) {
@@ -629,99 +646,191 @@ final class PN_BG {
 		if ( is_wp_error( $r ) || 200 !== $r['code'] || ! is_array( $r['body'] ) ) {
 			self::back( 'Não consegui consultar a Nuvemshop.', 'error' );
 		}
-		$c = self::cfg();
 		foreach ( $r['body'] as $o ) {
 			if ( is_array( $o ) && isset( $o['number'] ) && (string) $o['number'] === $num ) {
-				$tem = false;
-				foreach ( (array) $o['products'] as $it ) {
-					if ( is_array( $it ) && self::is_bg_item( $it, $c ) ) {
-						$tem = true;
-					}
-				}
-				if ( ! $tem ) {
+				if ( ! self::order_has_bg( $o ) ) {
 					self::back( 'Esse pedido não tem o produto Brasil Gigante.', 'error' );
 				}
 				if ( empty( $o['payment_status'] ) || 'paid' !== $o['payment_status'] ) {
 					self::back( 'Esse pedido ainda não está pago.', 'error' );
 				}
 				self::process_order( $o, true );
-				self::back( 'Pedido #' . $num . ' reprocessado. Veja o registro abaixo.' );
+				self::back( 'Pedido #' . $num . ' reprocessado. Veja o registro no fim da página.' );
 			}
 		}
 		self::back( 'Pedido não encontrado.', 'error' );
 	}
 
-	public static function render( $plugin_version ) {
-		$c   = self::cfg();
-		$st  = self::state();
-		$up  = PN_Updater::status();
-		$log = get_option( self::OPT_LOG, array() );
-		$eg  = PN_EGestor::has_credentials();
-
-		if ( isset( $_GET['pn_checked'] ) ) { // phpcs:ignore WordPress.Security.NonceVerification
-			echo '<div class="notice notice-info inline"><p>Atualizações verificadas agora.</p></div>';
-		}
-
-		echo '<h2>Estado</h2><table class="widefat striped" style="max-width:760px"><tbody>';
-		$linhas = array(
-			'Versão instalada'             => $plugin_version,
-			'Aviso de pedido pago'         => $c['avisos'] ? 'Ligado' : 'Desligado',
-			'Modo do eGestor'              => self::modos()[ $c['egestor_modo'] ],
-			'Credencial do eGestor'        => $eg ? 'Definida no wp-config.php' : 'Não definida (PN_EGESTOR_PERSONAL_TOKEN)',
-			'Webhook do eGestor (NF-e)'    => ( defined( 'PN_BG_EGESTOR_WH_TOKEN' ) && PN_BG_EGESTOR_WH_TOKEN ) ? 'Token definido' : 'Token não definido (PN_BG_EGESTOR_WH_TOKEN)',
-			'Pedidos já tratados'          => count( $st['done'] ),
-			'Atualização automática'       => $up['repo'] ? 'Repositório: ' . $up['repo'] . ( $up['latest'] ? ' (última versão publicada: ' . $up['latest'] . ')' : ( $up['erro'] ? ' (erro: ' . $up['erro'] . ')' : '' ) ) : 'Repositório não definido',
+	private static function pt( $tipo, $v ) {
+		$m = array(
+			'pagamento' => array( 'paid' => 'Pago', 'pending' => 'Pendente', 'authorized' => 'Autorizado', 'voided' => 'Anulado', 'refunded' => 'Reembolsado', 'abandoned' => 'Abandonado' ),
+			'envio'     => array( 'unpacked' => 'Não embalado', 'unshipped' => 'A enviar', 'shipped' => 'Enviado', 'delivered' => 'Entregue', 'ready_for_pickup' => 'Retirada' ),
 		);
-		foreach ( $linhas as $k => $v ) {
-			echo '<tr><th style="width:240px">' . esc_html( $k ) . '</th><td>' . esc_html( (string) $v ) . '</td></tr>';
-		}
-		echo '</tbody></table>';
-		echo '<p class="description">Endereço para cadastrar no eGestor (webhook de NF-e): <code>' . esc_html( rest_url( 'pn/v1/egestor' ) ) . '</code></p>';
+		return isset( $m[ $tipo ][ $v ] ) ? $m[ $tipo ][ $v ] : ( '' === $v ? '—' : $v );
+	}
 
-		echo '<h2>Configuração</h2><form method="post" action="' . esc_url( admin_url( 'admin-post.php' ) ) . '">';
-		echo '<input type="hidden" name="action" value="pn_bg_save">';
+	private static function postform( $action, $nonce, $label, $class = 'button' ) {
+		echo '<form method="post" action="' . esc_url( admin_url( 'admin-post.php' ) ) . '" style="display:inline-block;margin:0 8px 0 0">';
+		echo '<input type="hidden" name="action" value="' . esc_attr( $action ) . '">';
+		wp_nonce_field( $nonce );
+		echo '<button type="submit" class="' . esc_attr( $class ) . '">' . esc_html( $label ) . '</button></form>';
+	}
+
+	public static function render_page() {
+		if ( ! current_user_can( 'manage_options' ) ) {
+			wp_die( 'Sem permissão.' );
+		}
+		echo '<div class="wrap"><h1>Brasil Gigante</h1>';
+
+		$fk    = 'pn_flash_' . get_current_user_id();
+		$flash = get_transient( $fk );
+		if ( $flash ) {
+			delete_transient( $fk );
+			echo '<div class="notice notice-' . esc_attr( $flash['tipo'] ) . ' is-dismissible">';
+			foreach ( $flash['linhas'] as $l ) {
+				echo '<p>' . esc_html( $l ) . '</p>';
+			}
+			echo '</div>';
+		}
+
+		if ( ! PN_Gate::is_unlocked() ) {
+			PN_Gate::render_lock();
+			echo '</div>';
+			return;
+		}
+		self::render_panel();
+		echo '</div>';
+	}
+
+	private static function card( $titulo, $valor, $sub = '' ) {
+		echo '<div style="flex:1 1 160px;background:#fff;border:1px solid #dcdcde;border-radius:8px;padding:14px 16px">';
+		echo '<div style="color:#646970;font-size:12px">' . esc_html( $titulo ) . '</div>';
+		echo '<div style="font-size:22px;font-weight:600;margin-top:4px">' . esc_html( $valor ) . '</div>';
+		if ( '' !== $sub ) {
+			echo '<div style="color:#646970;font-size:12px;margin-top:2px">' . esc_html( $sub ) . '</div>';
+		}
+		echo '</div>';
+	}
+
+	private static function section( $titulo ) {
+		echo '<h2 style="margin:28px 0 10px">' . esc_html( $titulo ) . '</h2>';
+	}
+
+	private static function render_panel() {
+		$pn   = PN_Pedidos_Nuvemshop::instance();
+		$c    = self::cfg();
+		$st   = self::state();
+		$conn = $pn->bg_connection_status();
+		$sum  = $pn->bg_summary();
+		$ult  = $pn->bg_last_sync();
+		$up   = PN_Updater::status();
+
+		// Barra de topo.
+		echo '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:8px 0 4px">';
+		echo '<span style="display:inline-block;padding:3px 10px;border-radius:12px;color:#fff;background:' . ( $conn['ok'] ? '#1a7f37' : '#b32d2e' ) . '">' . esc_html( $conn['texto'] ) . '</span>';
+		echo '<span style="color:#646970">Última sincronização: ' . esc_html( $ult ? get_date_from_gmt( gmdate( 'Y-m-d H:i:s', strtotime( $ult ) ), 'd/m/Y H:i' ) : 'nunca' ) . '</span>';
+		self::postform( 'pn_bg_sync', 'pn_bg_sync', 'Sincronizar agora' );
+		self::postform( 'pn_gate_lock', 'pn_gate_lock', 'Bloquear painel' );
+		echo '</div>';
+
+		// 1. Resumo.
+		self::section( 'Resumo de vendas (pedidos pagos)' );
+		echo '<div style="display:flex;gap:12px;flex-wrap:wrap">';
+		self::card( 'Hoje', (int) $sum['hoje']['n'] . ' pedidos', 'R$ ' . number_format_i18n( (float) $sum['hoje']['receita'], 2 ) );
+		self::card( 'Últimos 7 dias', (int) $sum['7d']['n'] . ' pedidos', 'R$ ' . number_format_i18n( (float) $sum['7d']['receita'], 2 ) );
+		self::card( 'Últimos 30 dias', (int) $sum['30d']['n'] . ' pedidos', 'R$ ' . number_format_i18n( (float) $sum['30d']['receita'], 2 ) );
+		self::card( 'Pacotes vendidos (30 dias)', (string) (int) $sum['30d']['pacotes'], 'Frete médio R$ ' . number_format_i18n( (float) $sum['30d']['frete'], 2 ) );
+		self::card( 'Último pedido pago', $sum['ultimo'] ? get_date_from_gmt( $sum['ultimo'], 'd/m H:i' ) : '—' );
+		echo '</div>';
+
+		// 2. Envios.
+		self::section( 'Envios' );
+		$e = $sum['envios'];
+		$n = function ( $k ) use ( $e ) {
+			return isset( $e[ $k ] ) ? (int) $e[ $k ]->n : 0;
+		};
+		echo '<div style="display:flex;gap:12px;flex-wrap:wrap">';
+		self::card( 'A enviar', (string) ( $n( 'unshipped' ) + $n( 'unpacked' ) ) );
+		self::card( 'Enviados', (string) $n( 'shipped' ) );
+		self::card( 'Entregues', (string) $n( 'delivered' ) );
+		echo '</div>';
+
+		// 3. Pedidos.
+		self::section( 'Pedidos do Brasil Gigante' );
+		$pag = isset( $_GET['pg'] ) ? max( 1, (int) $_GET['pg'] ) : 1; // phpcs:ignore WordPress.Security.NonceVerification
+		$res = $pn->bg_orders( 20, $pag );
+		if ( ! $res['rows'] ) {
+			echo '<p>Nenhum pedido do Brasil Gigante sincronizado ainda. Clique em "Sincronizar agora".</p>';
+		} else {
+			echo '<table class="widefat striped"><thead><tr><th>Nº</th><th>Data</th><th>Pagamento</th><th>Pacotes</th><th>Total</th><th>Frete</th><th>Serviço</th><th>Envio</th><th>Rastreio</th><th>Destino</th><th>Cliente</th><th>eGestor</th></tr></thead><tbody>';
+			foreach ( $res['rows'] as $r ) {
+				$reg = isset( $st['orders'][ (string) $r->numero ] ) ? $st['orders'][ (string) $r->numero ] : array();
+				$egs = ! empty( $reg['venda'] ) ? 'Venda ' . (int) $reg['venda'] . ( ! empty( $reg['nfe_pedida'] ) ? ' · NF pedida' : '' ) : '—';
+				echo '<tr><td>#' . (int) $r->numero . '</td><td>' . esc_html( get_date_from_gmt( $r->criado_em, 'd/m/Y H:i' ) ) . '</td><td>' . esc_html( self::pt( 'pagamento', $r->status_pagamento ) ) . '</td><td>' . (int) $r->pacotes_250 . '</td><td>R$ ' . esc_html( number_format_i18n( (float) $r->total, 2 ) ) . '</td><td>R$ ' . esc_html( number_format_i18n( (float) $r->frete_cliente, 2 ) ) . '</td><td>' . esc_html( $r->servico_envio ? $r->servico_envio : '—' ) . '</td><td>' . esc_html( self::pt( 'envio', $r->status_envio ) ) . '</td><td>' . esc_html( $r->rastreio ? $r->rastreio : '—' ) . '</td><td>' . esc_html( trim( $r->cidade . ' ' . $r->uf ) ) . '</td><td>' . esc_html( $r->cliente_nome ) . '</td><td>' . esc_html( $egs ) . '</td></tr>';
+			}
+			echo '</tbody></table>';
+			$paginas = (int) ceil( $res['total'] / 20 );
+			if ( $paginas > 1 ) {
+				echo '<p>';
+				for ( $i = 1; $i <= $paginas; $i++ ) {
+					echo $i === $pag ? '<strong>' . (int) $i . '</strong> ' : '<a href="' . esc_url( add_query_arg( array( 'page' => 'pedidos-nuvemshop', 'pg' => $i ), admin_url( 'admin.php' ) ) ) . '">' . (int) $i . '</a> ';
+				}
+				echo '</p>';
+			}
+		}
+
+		// 4. Avisos e eGestor.
+		self::section( 'Avisos e eGestor' );
+		echo '<form method="post" action="' . esc_url( admin_url( 'admin-post.php' ) ) . '"><input type="hidden" name="action" value="pn_bg_save">';
 		wp_nonce_field( 'pn_bg_save' );
 		echo '<table class="form-table" role="presentation">';
-
-		echo '<tr><th>Trava de privacidade</th><td><label><input type="checkbox" name="pn_bg[somente_bg]" value="1"' . checked( $c['somente_bg'], 1, false ) . '> Guardar e processar somente pedidos que tenham o produto Brasil Gigante</label><p class="description">Recomendado. Pedidos de outros produtos da loja são ignorados e não entram no banco do WordPress.</p></td></tr>';
-		echo '<tr><th>Avisar pedido pago</th><td><label><input type="checkbox" name="pn_bg[avisos]" value="1"' . checked( $c['avisos'], 1, false ) . '> Enviar o aviso quando um pedido do Brasil Gigante for pago</label></td></tr>';
-		echo '<tr><th>E-mail do aviso</th><td><input type="email" class="regular-text" name="pn_bg[email_aviso]" value="' . esc_attr( $c['email_aviso'] ) . '"></td></tr>';
-		echo '<tr><th>Webhook do aviso (opcional)</th><td><input type="url" class="regular-text" name="pn_bg[webhook_url]" value="' . esc_attr( $c['webhook_url'] ) . '" placeholder="https://"><p class="description">Recebe o aviso em JSON. Só https. Assinatura HMAC no cabeçalho X-PN-Signature se PN_BG_WEBHOOK_SECRET estiver no wp-config.php.</p></td></tr>';
-		echo '<tr><th>E-mail de teste</th><td><input type="email" class="regular-text" name="pn_bg[email_teste]" value="' . esc_attr( $c['email_teste'] ) . '"><p class="description">Pedido feito com este e-mail leva a faixa "PEDIDO DE TESTE" e não aciona o eGestor.</p></td></tr>';
-		echo '<tr><th>Produto Brasil Gigante</th><td>ID do produto <input type="text" size="12" name="pn_bg[product_id]" value="' . esc_attr( $c['product_id'] ) . '"> ID da variação <input type="text" size="12" name="pn_bg[variant_id]" value="' . esc_attr( $c['variant_id'] ) . '"> SKU <input type="text" size="24" name="pn_bg[sku]" value="' . esc_attr( $c['sku'] ) . '"></td></tr>';
-
+		echo '<tr><th>Avisar pedido pago</th><td><label><input type="checkbox" name="pn_bg[avisos]" value="1"' . checked( $c['avisos'], 1, false ) . '> Registrar no painel (e no webhook, se houver) quando um pedido do Brasil Gigante for pago</label></td></tr>';
+		echo '<tr><th>Webhook do aviso (opcional)</th><td><input type="url" class="regular-text" name="pn_bg[webhook_url]" value="' . esc_attr( $c['webhook_url'] ) . '" placeholder="https://"><p class="description">Recebe o aviso em JSON (só https). Sem webhook, o aviso fica só no painel.</p></td></tr>';
 		echo '<tr><th>Modo do eGestor</th><td><select name="pn_bg[egestor_modo]">';
 		foreach ( self::modos() as $k => $lab ) {
 			echo '<option value="' . esc_attr( $k ) . '"' . selected( $c['egestor_modo'], $k, false ) . '>' . esc_html( $lab ) . '</option>';
 		}
-		echo '</select><p class="description">Comece em "Simulado". Só passe para "venda" ou "venda e NF-e" depois de validar com um pedido real e com o contador.</p></td></tr>';
-		echo '<tr><th>Código do produto no eGestor</th><td><input type="text" size="8" name="pn_bg[egestor_cod_prod]" value="' . esc_attr( $c['egestor_cod_prod'] ) . '"></td></tr>';
-		echo '<tr><th>Código da transportadora no eGestor (opcional)</th><td><input type="text" size="8" name="pn_bg[egestor_cod_transp]" value="' . esc_attr( $c['egestor_cod_transp'] ) . '"></td></tr>';
-
-		echo '<tr><th>Repositório de atualizações</th><td><input type="text" class="regular-text" name="pn_update_repo" value="' . esc_attr( (string) get_option( PN_Updater::OPT_REPO, '' ) ) . '" placeholder="dono/repositorio"' . ( ( defined( 'PN_UPDATE_REPO' ) && PN_UPDATE_REPO ) ? ' disabled' : '' ) . '><p class="description">Formato dono/repositorio do GitHub. Sempre que houver uma versão nova publicada lá, o WordPress mostra "Atualizar agora".</p></td></tr>';
+		echo '</select><p class="description">Credencial do eGestor: ' . ( PN_EGestor::has_credentials() ? 'definida' : 'não definida' ) . '. Comece em "Simulado".</p></td></tr>';
+		echo '<tr><th>Repositório de atualizações</th><td><input type="text" class="regular-text" name="pn_update_repo" value="' . esc_attr( (string) get_option( PN_Updater::OPT_REPO, '' ) ) . '" placeholder="dono/repositorio"' . ( ( defined( 'PN_UPDATE_REPO' ) && PN_UPDATE_REPO ) ? ' disabled' : '' ) . '><p class="description">Versão instalada: ' . esc_html( PN_Pedidos_Nuvemshop::VERSION ) . ( $up['latest'] ? ' · última publicada: ' . esc_html( $up['latest'] ) : '' ) . '</p></td></tr>';
 		echo '</table>';
-		submit_button( 'Salvar' );
+		echo '<details style="margin:0 0 12px"><summary style="cursor:pointer">Avançado (identificação do produto)</summary><table class="form-table" role="presentation">';
+		echo '<tr><th>Produto Brasil Gigante</th><td>ID do produto <input type="text" size="12" name="pn_bg[product_id]" value="' . esc_attr( $c['product_id'] ) . '"> ID da variação <input type="text" size="12" name="pn_bg[variant_id]" value="' . esc_attr( $c['variant_id'] ) . '"> SKU <input type="text" size="24" name="pn_bg[sku]" value="' . esc_attr( $c['sku'] ) . '"></td></tr>';
+		echo '<tr><th>Código do produto no eGestor</th><td><input type="text" size="8" name="pn_bg[egestor_cod_prod]" value="' . esc_attr( $c['egestor_cod_prod'] ) . '"> transportadora (opcional) <input type="text" size="8" name="pn_bg[egestor_cod_transp]" value="' . esc_attr( $c['egestor_cod_transp'] ) . '"></td></tr>';
+		echo '<tr><th>E-mail do comprador de teste</th><td><input type="email" class="regular-text" name="pn_bg[email_teste]" value="' . esc_attr( $c['email_teste'] ) . '"><p class="description">Pedido com este e-mail é marcado como teste e não aciona o eGestor.</p></td></tr>';
+		echo '</table></details>';
+		submit_button( 'Salvar', 'primary', 'submit', false );
 		echo '</form>';
-
-		echo '<h2>Atualizações do plugin</h2><form method="post" action="' . esc_url( admin_url( 'admin-post.php' ) ) . '" style="display:inline-block;margin-right:12px">';
-		echo '<input type="hidden" name="action" value="pn_check_update">';
-		wp_nonce_field( 'pn_check_update' );
-		submit_button( 'Verificar atualização agora', 'secondary', 'submit', false );
-		echo '</form>';
-
-		echo '<h2>Ferramentas</h2><form method="post" action="' . esc_url( admin_url( 'admin-post.php' ) ) . '" style="display:inline-block;margin-right:24px">';
-		echo '<input type="hidden" name="action" value="pn_bg_test">';
-		wp_nonce_field( 'pn_bg_test' );
-		submit_button( 'Enviar aviso de teste', 'secondary', 'submit', false );
-		echo '</form>';
-		echo '<form method="post" action="' . esc_url( admin_url( 'admin-post.php' ) ) . '" style="display:inline-block">';
-		echo '<input type="hidden" name="action" value="pn_bg_resend">';
+		echo '<p style="margin-top:12px">';
+		self::postform( 'pn_bg_test', 'pn_bg_test', 'Enviar aviso de teste' );
+		echo '<form method="post" action="' . esc_url( admin_url( 'admin-post.php' ) ) . '" style="display:inline-block"><input type="hidden" name="action" value="pn_bg_resend">';
 		wp_nonce_field( 'pn_bg_resend' );
-		echo '<input type="text" name="pn_num" size="8" placeholder="Nº do pedido"> ';
-		submit_button( 'Reprocessar pedido pago', 'secondary', 'submit', false );
+		echo '<input type="text" name="pn_num" size="8" placeholder="Nº do pedido"> <button type="submit" class="button">Reprocessar pedido pago</button></form>';
+		echo '</p>';
+		echo '<p>';
+		self::postform( 'pn_check_update', 'pn_check_update', 'Verificar atualização' );
+		echo '</p>';
+
+		// 5. Conexão.
+		self::section( 'Conexão com a Nuvemshop' );
+		$s_id = ( defined( 'NUVEMSHOP_STORE_ID' ) && NUVEMSHOP_STORE_ID ) ? (string) NUVEMSHOP_STORE_ID : (string) ( ( get_option( 'pn_settings', array() )['store_id'] ?? '8063546' ) );
+		echo '<form method="post" action="' . esc_url( admin_url( 'admin-post.php' ) ) . '"><input type="hidden" name="action" value="pn_bg_conn">';
+		wp_nonce_field( 'pn_bg_conn' );
+		echo '<table class="form-table" role="presentation"><tr><th>ID da loja</th><td><input type="text" class="regular-text" name="store_id" value="' . esc_attr( $s_id ) . '"></td></tr>';
+		echo '<tr><th>Token</th><td><input type="password" class="regular-text" name="token" value="" autocomplete="new-password" placeholder="Deixe em branco para manter o token salvo"><p class="description">O token só precisa de "Pedidos › Ler pedidos". Ele nunca é exibido de volta.</p></td></tr></table>';
+		submit_button( 'Salvar e testar conexão', 'secondary', 'submit', false );
 		echo '</form>';
 
-		echo '<h2>Registro (sem dados pessoais)</h2>';
+		// 6. Senha.
+		self::section( 'Senha do painel' );
+		echo '<details><summary style="cursor:pointer">Alterar senha</summary><form method="post" action="' . esc_url( admin_url( 'admin-post.php' ) ) . '" style="margin-top:8px"><input type="hidden" name="action" value="pn_gate_change">';
+		wp_nonce_field( 'pn_gate_change' );
+		echo '<p><input type="password" name="atual" placeholder="Senha atual" autocomplete="current-password" required></p><p><input type="password" name="nova" placeholder="Nova senha (8+)" autocomplete="new-password" required> <input type="password" name="nova2" placeholder="Repita a nova senha" autocomplete="new-password" required></p>';
+		submit_button( 'Alterar senha', 'secondary', 'submit', false );
+		echo '</form></details>';
+
+		// 7. Registro.
+		self::section( 'Registro (sem dados pessoais)' );
+		$log = get_option( self::OPT_LOG, array() );
 		if ( empty( $log ) || ! is_array( $log ) ) {
 			echo '<p>Nada registrado ainda.</p>';
 		} else {
@@ -731,5 +840,6 @@ final class PN_BG {
 			}
 			echo '</tbody></table>';
 		}
+		echo '<p class="description" style="margin-top:20px">Privacidade: este painel mostra e guarda apenas pedidos com o Brasil Gigante. Nome do cliente mascarado; CPF, e-mail, telefone e endereço completo não ficam gravados.</p>';
 	}
 }
