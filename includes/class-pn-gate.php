@@ -45,7 +45,7 @@ final class PN_Gate {
 		return '' !== self::hash();
 	}
 
-	private static function verify( $senha ) {
+	public static function verify( $senha ) {
 		$h = self::hash();
 		return '' !== $h && password_verify( (string) $senha, $h );
 	}

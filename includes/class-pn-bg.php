@@ -568,6 +568,14 @@ final class PN_BG {
 	public static function handle_conn() {
 		self::guard();
 		check_admin_referer( 'pn_bg_conn' );
+		$ja = PN_Pedidos_Nuvemshop::instance()->bg_connection_status();
+		if ( ! empty( $ja['ok'] ) ) {
+			// Conexão travada: só troca com a senha do painel digitada de novo.
+			$senha = isset( $_POST['senha'] ) ? (string) wp_unslash( $_POST['senha'] ) : ''; // phpcs:ignore WordPress.Security.ValidatedSanitizedInput
+			if ( ! PN_Gate::verify( $senha ) ) {
+				self::back( 'Senha incorreta. A conexão não foi alterada.', 'error' );
+			}
+		}
 		$sid = isset( $_POST['store_id'] ) ? (string) wp_unslash( $_POST['store_id'] ) : ''; // phpcs:ignore WordPress.Security.ValidatedSanitizedInput
 		$tok = isset( $_POST['token'] ) ? (string) wp_unslash( $_POST['token'] ) : ''; // phpcs:ignore WordPress.Security.ValidatedSanitizedInput
 		$r   = PN_Pedidos_Nuvemshop::instance()->bg_save_connection( $sid, $tok );
@@ -590,20 +598,16 @@ final class PN_BG {
 			'avisos'             => empty( $in['avisos'] ) ? 0 : 1,
 			'webhook_url'        => esc_url_raw( isset( $in['webhook_url'] ) ? trim( $in['webhook_url'] ) : '', array( 'https' ) ),
 			'email_teste'        => sanitize_email( isset( $in['email_teste'] ) ? $in['email_teste'] : '' ),
-			'product_id'         => preg_replace( '/\D/', '', isset( $in['product_id'] ) ? $in['product_id'] : '' ),
-			'variant_id'         => preg_replace( '/\D/', '', isset( $in['variant_id'] ) ? $in['variant_id'] : '' ),
-			'sku'                => preg_replace( '/[^A-Za-z0-9_\-]/', '', isset( $in['sku'] ) ? $in['sku'] : '' ),
+			// Identificação do produto: travada (não vem do formulário).
+			'product_id'         => self::cfg()['product_id'],
+			'variant_id'         => self::cfg()['variant_id'],
+			'sku'                => self::cfg()['sku'],
 			'egestor_modo'       => ( isset( $in['egestor_modo'] ) && isset( $modos[ $in['egestor_modo'] ] ) ) ? $in['egestor_modo'] : 'off',
 			'egestor_cod_prod'   => preg_replace( '/\D/', '', isset( $in['egestor_cod_prod'] ) ? $in['egestor_cod_prod'] : '' ),
 			'egestor_cod_transp' => preg_replace( '/\D/', '', isset( $in['egestor_cod_transp'] ) ? $in['egestor_cod_transp'] : '' ),
 		);
 		update_option( self::OPT_CFG, $new, false );
 
-		$repo = isset( $_POST['pn_update_repo'] ) ? trim( sanitize_text_field( wp_unslash( $_POST['pn_update_repo'] ) ) ) : ''; // phpcs:ignore WordPress.Security.NonceVerification
-		if ( ! ( defined( 'PN_UPDATE_REPO' ) && PN_UPDATE_REPO ) ) {
-			update_option( PN_Updater::OPT_REPO, preg_match( '#^[A-Za-z0-9_.\-]+/[A-Za-z0-9_.\-]+$#', $repo ) ? $repo : '', false );
-			delete_site_transient( PN_Updater::CACHE_KEY );
-		}
 		self::back( 'Configurações salvas.' );
 	}
 
@@ -812,10 +816,10 @@ final class PN_BG {
 			echo '<option value="' . esc_attr( $k ) . '"' . selected( $c['egestor_modo'], $k, false ) . '>' . esc_html( $lab ) . '</option>';
 		}
 		echo '</select><p class="description">Credencial do eGestor: ' . ( PN_EGestor::has_credentials() ? 'definida' : 'não definida' ) . '. Comece em "Simulado".</p></td></tr>';
-		echo '<tr><th>Repositório de atualizações</th><td><input type="text" class="regular-text" name="pn_update_repo" value="' . esc_attr( (string) get_option( PN_Updater::OPT_REPO, '' ) ) . '" placeholder="dono/repositorio"' . ( ( defined( 'PN_UPDATE_REPO' ) && PN_UPDATE_REPO ) ? ' disabled' : '' ) . '><p class="description">Versão instalada: ' . esc_html( PN_Pedidos_Nuvemshop::VERSION ) . ( $up['latest'] ? ' · última publicada: ' . esc_html( $up['latest'] ) : '' ) . '</p>' . self::update_line( $up ) . '</td></tr>';
+		echo '<tr><th>Atualizações</th><td><span style="color:#1a7f37">🔒 Automáticas, repositório oficial (travado)</span><p class="description">Versão instalada: ' . esc_html( PN_Pedidos_Nuvemshop::VERSION ) . ( $up['latest'] ? ' · última publicada: ' . esc_html( $up['latest'] ) : '' ) . '</p>' . self::update_line( $up ) . '</td></tr>';
 		echo '</table>';
-		echo '<details style="margin:0 0 12px"><summary style="cursor:pointer">Avançado (identificação do produto)</summary><table class="form-table" role="presentation">';
-		echo '<tr><th>Produto Brasil Gigante</th><td>ID do produto <input type="text" size="12" name="pn_bg[product_id]" value="' . esc_attr( $c['product_id'] ) . '"> ID da variação <input type="text" size="12" name="pn_bg[variant_id]" value="' . esc_attr( $c['variant_id'] ) . '"> SKU <input type="text" size="24" name="pn_bg[sku]" value="' . esc_attr( $c['sku'] ) . '"></td></tr>';
+		echo '<details style="margin:0 0 12px"><summary style="cursor:pointer">Avançado (eGestor e e-mail de teste)</summary><table class="form-table" role="presentation">';
+		echo '<tr><th>Produto Brasil Gigante</th><td>🔒 ID do produto <code>' . esc_html( $c['product_id'] ) . '</code> · variação <code>' . esc_html( $c['variant_id'] ) . '</code> · SKU <code>' . esc_html( $c['sku'] ) . '</code><p class="description">Travado: só o Brasil Gigante entra no painel.</p></td></tr>';
 		echo '<tr><th>Código do produto no eGestor</th><td><input type="text" size="8" name="pn_bg[egestor_cod_prod]" value="' . esc_attr( $c['egestor_cod_prod'] ) . '"> transportadora (opcional) <input type="text" size="8" name="pn_bg[egestor_cod_transp]" value="' . esc_attr( $c['egestor_cod_transp'] ) . '"></td></tr>';
 		echo '<tr><th>E-mail do comprador de teste</th><td><input type="email" class="regular-text" name="pn_bg[email_teste]" value="' . esc_attr( $c['email_teste'] ) . '"><p class="description">Pedido com este e-mail é marcado como teste e não aciona o eGestor.</p></td></tr>';
 		echo '</table></details>';
@@ -834,12 +838,25 @@ final class PN_BG {
 		// 5. Conexão.
 		self::section( 'Conexão com a Nuvemshop' );
 		$s_id = ( defined( 'NUVEMSHOP_STORE_ID' ) && NUVEMSHOP_STORE_ID ) ? (string) NUVEMSHOP_STORE_ID : (string) ( ( get_option( 'pn_settings', array() )['store_id'] ?? '8063546' ) );
+		$hint      = $pn->bg_connection_hint();
+		$conectado = ! empty( $conn['ok'] );
+		if ( $conectado ) {
+			echo '<p>🔒 Conexão travada: loja <code>' . esc_html( $hint['store_id'] ) . '</code> · token terminado em <code>' . esc_html( $hint['token_fim'] ) . '</code>.</p>';
+			echo '<details style="margin:0 0 12px"><summary style="cursor:pointer">Trocar a conexão (pede a senha do painel)</summary>';
+		}
 		echo '<form method="post" action="' . esc_url( admin_url( 'admin-post.php' ) ) . '"><input type="hidden" name="action" value="pn_bg_conn">';
 		wp_nonce_field( 'pn_bg_conn' );
-		echo '<table class="form-table" role="presentation"><tr><th>ID da loja</th><td><input type="text" class="regular-text" name="store_id" value="' . esc_attr( $s_id ) . '"></td></tr>';
-		echo '<tr><th>Token</th><td><input type="password" class="regular-text" name="token" value="" autocomplete="new-password" placeholder="Deixe em branco para manter o token salvo"><p class="description">O token só precisa de "Pedidos › Ler pedidos". Ele nunca é exibido de volta.</p></td></tr></table>';
+		echo '<table class="form-table" role="presentation"><tr><th>ID da loja</th><td><input type="text" class="regular-text" name="store_id" value="' . esc_attr( $hint['store_id'] ? $hint['store_id'] : $s_id ) . '"></td></tr>';
+		echo '<tr><th>Token</th><td><input type="password" class="regular-text" name="token" value="" autocomplete="new-password" placeholder="Deixe em branco para manter o token salvo"><p class="description">O token só precisa de "Pedidos › Ler pedidos". Ele nunca é exibido de volta.</p></td></tr>';
+		if ( $conectado ) {
+			echo '<tr><th>Senha do painel</th><td><input type="password" class="regular-text" name="senha" autocomplete="current-password" required></td></tr>';
+		}
+		echo '</table>';
 		submit_button( 'Salvar e testar conexão', 'secondary', 'submit', false );
 		echo '</form>';
+		if ( $conectado ) {
+			echo '</details>';
+		}
 
 		self::section( 'Senha do painel' );
 		PN_Gate::render_change();
