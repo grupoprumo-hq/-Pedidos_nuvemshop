@@ -3,7 +3,8 @@ Painel exclusivo do Café Brasil Gigante: lê somente os pedidos do produto, mos
 
 == Instalação ==
 1. Plugins > Adicionar novo > Enviar plugin > escolha o .zip > Instalar e Ativar.
-2. Abra o menu "Brasil Gigante". No primeiro acesso, crie a senha do painel (8+ caracteres).
+2. Cole no wp-config.php a linha define( 'PN_GATE_HASH', '...' ); fornecida pelo responsável. Sem ela o painel fica bloqueado. A senha não é criada nem alterada pelo plugin.
+   Depois abra o menu "Brasil Gigante" e informe a senha.
 3. Em "Conexão com a Nuvemshop", informe o ID da loja e o token (app com apenas "Pedidos > Ler pedidos") e clique em "Salvar e testar conexão".
    Opcional, mais seguro: no wp-config.php, antes de "That's all, stop editing!":
      define( 'NUVEMSHOP_STORE_ID', '8063546' );

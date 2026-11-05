@@ -820,15 +820,7 @@ final class PN_BG {
 		submit_button( 'Salvar e testar conexão', 'secondary', 'submit', false );
 		echo '</form>';
 
-		// 6. Senha.
-		self::section( 'Senha do painel' );
-		echo '<details><summary style="cursor:pointer">Alterar senha</summary><form method="post" action="' . esc_url( admin_url( 'admin-post.php' ) ) . '" style="margin-top:8px"><input type="hidden" name="action" value="pn_gate_change">';
-		wp_nonce_field( 'pn_gate_change' );
-		echo '<p><input type="password" name="atual" placeholder="Senha atual" autocomplete="current-password" required></p><p><input type="password" name="nova" placeholder="Nova senha (8+)" autocomplete="new-password" required> <input type="password" name="nova2" placeholder="Repita a nova senha" autocomplete="new-password" required></p>';
-		submit_button( 'Alterar senha', 'secondary', 'submit', false );
-		echo '</form></details>';
-
-		// 7. Registro.
+		// 6. Registro.
 		self::section( 'Registro (sem dados pessoais)' );
 		$log = get_option( self::OPT_LOG, array() );
 		if ( empty( $log ) || ! is_array( $log ) ) {
