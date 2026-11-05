@@ -23,7 +23,8 @@ final class PN_Updater {
 
 	const OPT_REPO  = 'pn_update_repo';
 	const CACHE_KEY = 'pn_update_release';
-	const CACHE_TTL = 6 * HOUR_IN_SECONDS;
+	const CACHE_TTL = 1 * HOUR_IN_SECONDS;
+	const DEFAULT_REPO = 'grupoprumo-hq/-Pedidos_nuvemshop';
 
 	private $file;
 	private $basename;
@@ -55,6 +56,9 @@ final class PN_Updater {
 			$r = (string) PN_UPDATE_REPO;
 		} else {
 			$r = (string) get_option( self::OPT_REPO, '' );
+		}
+		if ( '' === trim( $r ) ) {
+			$r = self::DEFAULT_REPO; // Repositório oficial: a atualização funciona sem configurar nada.
 		}
 		$r = trim( $r );
 		return preg_match( '#^[A-Za-z0-9_.\-]+/[A-Za-z0-9_.\-]+$#', $r ) ? $r : '';
