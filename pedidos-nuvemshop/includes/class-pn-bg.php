@@ -39,14 +39,14 @@ final class PN_BG {
 
 	public static function cfg() {
 		$d = array(
-			'avisos'            => 0,
+			'avisos'            => 1,
 			'email_aviso'       => get_option( 'admin_email', '' ),
 			'webhook_url'       => '',
 			'email_teste'       => '',
 			'product_id'        => '378563445',
 			'variant_id'        => '1631936515',
 			'sku'               => 'BG-GOURMET-MOIDO-250',
-			'egestor_modo'      => 'off',
+			'egestor_modo'      => 'simulado',
 			'egestor_cod_prod'  => '9',
 			'egestor_cod_transp' => '',
 		);
