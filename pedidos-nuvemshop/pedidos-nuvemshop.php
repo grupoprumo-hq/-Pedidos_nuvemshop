@@ -545,6 +545,10 @@ final class PN_Pedidos_Nuvemshop {
 			if ( empty( $def['sync'] ) ) {
 				continue;
 			}
+			if ( 'orders' !== $key && PN_BG::only_bg() ) {
+				$linhas[] = $def['label'] . ': pulado (trava "somente Brasil Gigante" ligada).';
+				continue;
+			}
 			if ( ! $this->can_read( $key ) ) {
 				$linhas[] = $def['label'] . ': pulado (token sem permissão de leitura).';
 				continue;
@@ -620,6 +624,9 @@ final class PN_Pedidos_Nuvemshop {
 
 			foreach ( $r['body'] as $item ) {
 				if ( is_array( $item ) && ! empty( $item['id'] ) ) {
+					if ( 'orders' === $key && PN_BG::only_bg() && ! PN_BG::order_has_bg( $item ) ) {
+						continue; // trava: ignora pedidos sem o Brasil Gigante.
+					}
 					if ( 'orders' === $key ) {
 						$this->upsert_order( $item );
 					} else {

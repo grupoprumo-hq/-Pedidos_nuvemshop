@@ -39,6 +39,7 @@ final class PN_BG {
 
 	public static function cfg() {
 		$d = array(
+			'somente_bg'        => 1,
 			'avisos'            => 1,
 			'email_aviso'       => get_option( 'admin_email', '' ),
 			'webhook_url'       => '',
@@ -82,6 +83,25 @@ final class PN_BG {
 
 	public static function on_synced( $unused = null ) {
 		self::run();
+	}
+
+	/** Trava: com "somente Brasil Gigante" ligado (padrão), o plugin só guarda e processa pedidos com o produto. */
+	public static function only_bg() {
+		$c = self::cfg();
+		return ! empty( $c['somente_bg'] );
+	}
+
+	public static function order_has_bg( $o ) {
+		if ( ! is_array( $o ) || empty( $o['products'] ) ) {
+			return false;
+		}
+		$c = self::cfg();
+		foreach ( (array) $o['products'] as $it ) {
+			if ( is_array( $it ) && self::is_bg_item( $it, $c ) ) {
+				return true;
+			}
+		}
+		return false;
 	}
 
 	private static function is_bg_item( array $it, array $c ) {
@@ -549,6 +569,7 @@ final class PN_BG {
 		$in    = isset( $_POST['pn_bg'] ) ? wp_unslash( (array) $_POST['pn_bg'] ) : array(); // phpcs:ignore WordPress.Security.ValidatedSanitizedInput
 		$modos = self::modos();
 		$new   = array(
+			'somente_bg'         => empty( $in['somente_bg'] ) ? 0 : 1,
 			'avisos'             => empty( $in['avisos'] ) ? 0 : 1,
 			'email_aviso'        => sanitize_email( isset( $in['email_aviso'] ) ? $in['email_aviso'] : '' ),
 			'webhook_url'        => esc_url_raw( isset( $in['webhook_url'] ) ? trim( $in['webhook_url'] ) : '', array( 'https' ) ),
@@ -662,6 +683,7 @@ final class PN_BG {
 		wp_nonce_field( 'pn_bg_save' );
 		echo '<table class="form-table" role="presentation">';
 
+		echo '<tr><th>Trava de privacidade</th><td><label><input type="checkbox" name="pn_bg[somente_bg]" value="1"' . checked( $c['somente_bg'], 1, false ) . '> Guardar e processar somente pedidos que tenham o produto Brasil Gigante</label><p class="description">Recomendado. Pedidos de outros produtos da loja são ignorados e não entram no banco do WordPress.</p></td></tr>';
 		echo '<tr><th>Avisar pedido pago</th><td><label><input type="checkbox" name="pn_bg[avisos]" value="1"' . checked( $c['avisos'], 1, false ) . '> Enviar o aviso quando um pedido do Brasil Gigante for pago</label></td></tr>';
 		echo '<tr><th>E-mail do aviso</th><td><input type="email" class="regular-text" name="pn_bg[email_aviso]" value="' . esc_attr( $c['email_aviso'] ) . '"></td></tr>';
 		echo '<tr><th>Webhook do aviso (opcional)</th><td><input type="url" class="regular-text" name="pn_bg[webhook_url]" value="' . esc_attr( $c['webhook_url'] ) . '" placeholder="https://"><p class="description">Recebe o aviso em JSON. Só https. Assinatura HMAC no cabeçalho X-PN-Signature se PN_BG_WEBHOOK_SECRET estiver no wp-config.php.</p></td></tr>';
