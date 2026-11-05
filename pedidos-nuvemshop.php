@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       Pedidos Nuvemshop
  * Description:       Painel exclusivo do Café Brasil Gigante: lê somente os pedidos do produto (vendas e envios), avisa pedido pago e prepara a venda e a NF-e no eGestor. Acesso protegido por senha.
- * Version:           3.2.9
+ * Version:           3.2.10
  * Requires at least: 5.8
  * Requires PHP:      7.4
  * Author:            Café Zé Velho
@@ -21,7 +21,7 @@ require_once __DIR__ . '/includes/class-pn-bg.php';
 
 final class PN_Pedidos_Nuvemshop {
 
-	const VERSION      = '3.2.9';
+	const VERSION      = '3.2.10';
 	const DB_VERSION   = '4';
 	const OPT_SETTINGS = 'pn_settings';
 	const OPT_STATE    = 'pn_state3';
@@ -139,6 +139,7 @@ final class PN_Pedidos_Nuvemshop {
 			}
 			self::create_tables();
 		}
+		delete_option( 'pn_envio_perm' );
 		if ( get_option( 'pn_ver_seen' ) !== self::VERSION ) {
 			update_option( 'pn_ver_prev', (string) get_option( 'pn_ver_seen', '' ), false );
 			update_option( 'pn_ver_seen', self::VERSION, false );
@@ -584,21 +585,6 @@ final class PN_Pedidos_Nuvemshop {
 			$o = $r['body'];
 			if ( ! PN_BG::order_has_bg( $o ) ) {
 				continue;
-			}
-			// Remessas (fulfillment orders): status e rastreio mais atuais. Pode exigir permissão no app.
-			$f = $this->api_get( 'orders/' . (int) $id . '/fulfillment-orders' );
-			if ( ! is_wp_error( $f ) ) {
-				if ( in_array( (int) $f['code'], array( 401, 403 ), true ) ) {
-					update_option( 'pn_envio_perm', 'negado', false );
-				} elseif ( 200 === (int) $f['code'] && is_array( $f['body'] ) ) {
-					update_option( 'pn_envio_perm', 'ok', false );
-					$o['fulfillments'] = array_map(
-						function ( $x ) {
-							return is_array( $x ) ? $x : array();
-						},
-						array_values( $f['body'] )
-					);
-				}
 			}
 			$this->upsert_order( $o );
 			$n++;

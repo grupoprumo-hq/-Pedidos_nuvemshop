@@ -141,6 +141,9 @@ final class PN_BG {
 			'orders',
 			array( 'payment_status' => 'paid', 'updated_at_min' => $st['cursor'], 'per_page' => 50 )
 		);
+		if ( ! is_wp_error( $r ) && 404 === (int) $r['code'] ) {
+			$r = array( 'code' => 200, 'body' => array() ); // a Nuvemshop responde 404 quando não há pedidos no filtro: não é erro.
+		}
 		if ( is_wp_error( $r ) || 200 !== $r['code'] || ! is_array( $r['body'] ) ) {
 			self::log( '-', 'consulta', is_wp_error( $r ) ? $r->get_error_message() : 'HTTP ' . (int) $r['code'] );
 			delete_transient( 'pn_bg_lock' );
@@ -759,10 +762,6 @@ final class PN_BG {
 
 		if ( 0 === strpos( $conn['texto'], 'Falta' ) ) {
 			echo '<div class="notice notice-warning inline"><p><strong>Por isso a sincronização não roda:</strong> ' . esc_html( $conn['texto'] ) . '. Role até "Conexão com a Nuvemshop", cole o token e clique em "Salvar e testar conexão".</p></div>';
-		}
-
-		if ( 'negado' === get_option( 'pn_envio_perm', '' ) ) {
-			echo '<div class="notice notice-warning inline"><p><strong>Status de envio incompleto:</strong> a Nuvemshop negou a leitura das remessas. No app "Brasil Gigante - Plugin WordPress", marque a permissão de leitura de envio/remessas (se houver) e gere o token de novo.</p></div>';
 		}
 
 		// 1. Resumo.
