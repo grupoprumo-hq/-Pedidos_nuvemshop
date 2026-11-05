@@ -820,6 +820,9 @@ final class PN_BG {
 		submit_button( 'Salvar e testar conexão', 'secondary', 'submit', false );
 		echo '</form>';
 
+		self::section( 'Senha do painel' );
+		PN_Gate::render_change();
+
 		// 6. Registro.
 		self::section( 'Registro (sem dados pessoais)' );
 		$log = get_option( self::OPT_LOG, array() );
