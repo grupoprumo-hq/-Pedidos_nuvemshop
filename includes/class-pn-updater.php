@@ -39,6 +39,8 @@ final class PN_Updater {
 			$u->hooks();
 		}
 		add_action( 'admin_post_pn_check_update', array( $u, 'handle_check_now' ) );
+		add_action( 'load-plugins.php', array( $u, 'maybe_refresh' ) );
+		add_action( 'load-update-core.php', array( $u, 'maybe_refresh' ) );
 		return $u;
 	}
 
@@ -98,6 +100,15 @@ final class PN_Updater {
 			array( 'timeout' => 15, 'headers' => $this->headers() )
 		);
 		$ok_http = ! is_wp_error( $resp ) && 200 === (int) wp_remote_retrieve_response_code( $resp );
+		if ( ! $ok_http ) {
+			// A API do GitHub limita consultas por IP (hospedagem compartilhada estoura fácil). Plano B: página pública de "última release".
+			$fb = $this->latest_fallback();
+			if ( $fb ) {
+				update_option( 'pn_update_check', array( 'em' => gmdate( 'Y-m-d H:i:s' ), 'ok' => true, 'erro' => '' ), false );
+				set_site_transient( self::CACHE_KEY, $fb, self::CACHE_TTL );
+				return $fb;
+			}
+		}
 		update_option( 'pn_update_check', array( 'em' => gmdate( 'Y-m-d H:i:s' ), 'ok' => $ok_http, 'erro' => $ok_http ? '' : ( is_wp_error( $resp ) ? $resp->get_error_message() : 'HTTP ' . (int) wp_remote_retrieve_response_code( $resp ) ) ), false );
 		if ( ! $ok_http ) {
 			// Guarda o "vazio" por pouco tempo para não consultar a cada página.
@@ -131,6 +142,26 @@ final class PN_Updater {
 		);
 		set_site_transient( self::CACHE_KEY, $out, self::CACHE_TTL );
 		return $out;
+	}
+
+	/** Descobre a última tag pelo redirecionamento de github.com/.../releases/latest (sem limite de API). */
+	private function latest_fallback() {
+		$resp = wp_remote_head( 'https://github.com/' . $this->repo . '/releases/latest', array( 'timeout' => 15, 'redirection' => 0, 'headers' => array( 'User-Agent' => 'Pedidos-Nuvemshop-WP' ) ) );
+		if ( is_wp_error( $resp ) ) {
+			return null;
+		}
+		$loc = (string) wp_remote_retrieve_header( $resp, 'location' );
+		if ( ! preg_match( '#/releases/tag/([^/?\#]+)$#', $loc, $m ) ) {
+			return null;
+		}
+		$tag = rawurldecode( $m[1] );
+		return array(
+			'version'   => ltrim( $tag, 'vV' ),
+			'package'   => 'https://github.com/' . $this->repo . '/archive/refs/tags/' . rawurlencode( $tag ) . '.zip',
+			'url'       => 'https://github.com/' . $this->repo . '/releases/tag/' . rawurlencode( $tag ),
+			'notes'     => '',
+			'published' => '',
+		);
 	}
 
 	public function inject( $transient ) {
@@ -221,6 +252,15 @@ final class PN_Updater {
 			return $wanted;
 		}
 		return new WP_Error( 'pn_update_folder', 'Não foi possível preparar a pasta da atualização.' );
+	}
+
+	/** Ao abrir Plugins ou Atualizações, reconsulta o GitHub se a última consulta tem mais de 10 minutos. */
+	public function maybe_refresh() {
+		$c = get_option( 'pn_update_check', array() );
+		if ( empty( $c['em'] ) || ( time() - strtotime( $c['em'] . ' UTC' ) ) > 10 * MINUTE_IN_SECONDS ) {
+			delete_site_transient( self::CACHE_KEY );
+			delete_site_transient( 'update_plugins' );
+		}
 	}
 
 	public function handle_check_now() {
