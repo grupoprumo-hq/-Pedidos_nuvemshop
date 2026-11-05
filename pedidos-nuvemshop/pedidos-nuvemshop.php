@@ -457,6 +457,11 @@ final class PN_Pedidos_Nuvemshop {
 
 		if ( '' === $caps['erro'] ) {
 			foreach ( $this->resources() as $key => $def ) {
+				if ( 'orders' !== $key && PN_BG::only_bg() ) {
+					// Trava "somente Brasil Gigante": nem consulta os outros dados da loja.
+					$caps['recursos'][ $key ] = array( 'status' => 'negado', 'http' => 0, 'total' => null, 'amostra' => '', 'msg' => 'bloqueado pela trava Brasil Gigante' );
+					continue;
+				}
 				usleep( 550000 ); // respeita o limite de 2 requisições por segundo.
 				$caps['recursos'][ $key ] = $this->classify_probe( $key, $this->api_get( $def['path'], array( 'per_page' => 1 ) ) );
 			}
