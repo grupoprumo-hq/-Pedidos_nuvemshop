@@ -2,9 +2,9 @@
 /**
  * Porta de acesso do painel Brasil Gigante: tudo exige a senha do painel.
  *
- * A senha NUNCA é criada na tela do plugin: o responsável gera o código (hash) fora e ele é importado
- * (colado uma vez) no painel, ou definido em PN_GATE_HASH no wp-config.php (modo mais seguro).
- * Trocar exige a senha atual + novo código.
+ * Senha mestre: vem pronta com o plugin (só o hash, nunca a senha). Ninguém cria senha na tela.
+ * Ordem: PN_GATE_HASH no wp-config.php (mais seguro) > código trocado no painel > senha mestre embutida.
+ * Trocar no painel exige a senha atual + novo código.
  * Sessão liberada por 30 minutos, por usuário. 5 erros seguidos bloqueiam por 15 minutos.
  */
 
@@ -17,6 +17,8 @@ final class PN_Gate {
 	const TTL      = 30 * MINUTE_IN_SECONDS;
 	const MAX_FAIL = 5;
 	const LOCK     = 15 * MINUTE_IN_SECONDS;
+	/** Hash (bcrypt) da senha mestre do Brasil Gigante. A senha em si não está em nenhum lugar do código. */
+	const MASTER_HASH = '$2y$10$W3G/9KTej2btHv1dlNTNg.oZAJuiMXd6THmtlCax7zUO7lrkXo7gO';
 
 	public static function init() {
 		if ( is_admin() ) {
@@ -35,7 +37,8 @@ final class PN_Gate {
 		if ( self::from_config() ) {
 			return trim( PN_GATE_HASH );
 		}
-		return (string) get_option( 'pn_gate_hash', '' );
+		$o = (string) get_option( 'pn_gate_hash', '' );
+		return '' !== $o ? $o : self::MASTER_HASH;
 	}
 
 	public static function has_password() {
@@ -101,9 +104,11 @@ final class PN_Gate {
 	}
 
 	private static function valid_hash( $h ) {
-		$h = trim( $h );
-		$i = password_get_info( $h );
-		return ( ! empty( $i['algo'] ) && 60 === strlen( $h ) ) ? $h : '';
+		// Aceita colar com espaços, aspas, crases ou quebras de linha em volta.
+		if ( preg_match( '#\$2y\$\d{2}\$[A-Za-z0-9./]{53}#', (string) $h, $m ) ) {
+			return $m[0];
+		}
+		return '';
 	}
 
 	/** Importa o hash da senha (gerado fora do plugin). Só funciona se ainda não houver senha. */
