@@ -8,7 +8,7 @@ if ( ! defined( 'WP_UNINSTALL_PLUGIN' ) ) {
 
 global $wpdb;
 
-foreach ( array( 'pn_settings', 'pn_state3', 'pn_sync_state', 'pn_caps', 'pn_db_version', 'pn_bg', 'pn_bg_state', 'pn_bg_log', 'pn_update_repo', 'pn_gate_hash', 'pn_update_check', 'pn_ver_seen', 'pn_ver_prev', 'pn_ver_at' ) as $opt ) {
+foreach ( array( 'pn_settings', 'pn_state3', 'pn_sync_state', 'pn_caps', 'pn_db_version', 'pn_bg', 'pn_bg_state', 'pn_bg_log', 'pn_update_repo', 'pn_gate_hash', 'pn_update_check', 'pn_ver_seen', 'pn_ver_prev', 'pn_ver_at', 'pn_sync_horas', 'pn_envio_perm' ) as $opt ) {
 	delete_option( $opt );
 }
 delete_transient( 'pn_sync_lock' );

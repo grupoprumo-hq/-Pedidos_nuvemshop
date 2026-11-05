@@ -608,6 +608,9 @@ final class PN_BG {
 		);
 		update_option( self::OPT_CFG, $new, false );
 
+		$hh = isset( $_POST['pn_sync_horas'] ) ? sanitize_text_field( wp_unslash( $_POST['pn_sync_horas'] ) ) : '2'; // phpcs:ignore WordPress.Security.NonceVerification
+		update_option( 'pn_sync_horas', in_array( $hh, array( '0.5', '1', '2' ), true ) ? $hh : '2', false );
+		PN_Pedidos_Nuvemshop::ensure_cron();
 		self::back( 'Configurações salvas.' );
 	}
 
@@ -668,7 +671,7 @@ final class PN_BG {
 	private static function pt( $tipo, $v ) {
 		$m = array(
 			'pagamento' => array( 'paid' => 'Pago', 'pending' => 'Pendente', 'authorized' => 'Autorizado', 'voided' => 'Anulado', 'refunded' => 'Reembolsado', 'abandoned' => 'Abandonado' ),
-			'envio'     => array( 'unpacked' => 'Não embalado', 'unshipped' => 'A enviar', 'shipped' => 'Enviado', 'delivered' => 'Entregue', 'ready_for_pickup' => 'Retirada' ),
+			'envio'     => array( 'unpacked' => 'Não embalado', 'in_preparation' => 'Em preparação', 'packed' => 'Embalado', 'unshipped' => 'A enviar', 'shipped' => 'Enviado', 'delivered' => 'Entregue', 'ready_for_pickup' => 'Retirada', 'closed' => 'Encerrado', 'cancelled' => 'Cancelado' ),
 		);
 		return isset( $m[ $tipo ][ $v ] ) ? $m[ $tipo ][ $v ] : ( '' === $v ? '—' : $v );
 	}
@@ -758,6 +761,10 @@ final class PN_BG {
 			echo '<div class="notice notice-warning inline"><p><strong>Por isso a sincronização não roda:</strong> ' . esc_html( $conn['texto'] ) . '. Role até "Conexão com a Nuvemshop", cole o token e clique em "Salvar e testar conexão".</p></div>';
 		}
 
+		if ( 'negado' === get_option( 'pn_envio_perm', '' ) ) {
+			echo '<div class="notice notice-warning inline"><p><strong>Status de envio incompleto:</strong> a Nuvemshop negou a leitura das remessas. No app "Brasil Gigante - Plugin WordPress", marque a permissão de leitura de envio/remessas (se houver) e gere o token de novo.</p></div>';
+		}
+
 		// 1. Resumo.
 		self::section( 'Resumo de vendas (pedidos pagos)' );
 		echo '<div style="display:flex;gap:12px;flex-wrap:wrap">';
@@ -811,6 +818,13 @@ final class PN_BG {
 		echo '<table class="form-table" role="presentation">';
 		echo '<tr><th>Avisar pedido pago</th><td><label><input type="checkbox" name="pn_bg[avisos]" value="1"' . checked( $c['avisos'], 1, false ) . '> Registrar no painel (e no webhook, se houver) quando um pedido do Brasil Gigante for pago</label></td></tr>';
 		echo '<tr><th>Webhook do aviso (opcional)</th><td><input type="url" class="regular-text" name="pn_bg[webhook_url]" value="' . esc_attr( $c['webhook_url'] ) . '" placeholder="https://"><p class="description">Recebe o aviso em JSON (só https). Sem webhook, o aviso fica só no painel.</p></td></tr>';
+		$h = PN_Pedidos_Nuvemshop::sync_horas();
+		echo '<tr><th>Sincronização automática</th><td><select name="pn_sync_horas">';
+		foreach ( array( '0.5' => 'a cada 30 minutos', '1' => 'a cada 1 hora', '2' => 'a cada 2 horas (recomendado)' ) as $k => $lab ) {
+			echo '<option value="' . esc_attr( $k ) . '"' . selected( $h, (string) $k, false ) . '>' . esc_html( $lab ) . '</option>';
+		}
+		$prox = wp_next_scheduled( PN_Pedidos_Nuvemshop::CRON_HOOK );
+		echo '</select><p class="description">Traz pedidos novos e atualiza o status de envio. O botão "Sincronizar agora" continua disponível.' . ( $prox ? ' Próxima automática: ' . esc_html( get_date_from_gmt( gmdate( 'Y-m-d H:i:s', $prox ), 'd/m H:i' ) ) . '.' : '' ) . '</p></td></tr>';
 		echo '<tr><th>Modo do eGestor</th><td><select name="pn_bg[egestor_modo]">';
 		foreach ( self::modos() as $k => $lab ) {
 			echo '<option value="' . esc_attr( $k ) . '"' . selected( $c['egestor_modo'], $k, false ) . '>' . esc_html( $lab ) . '</option>';

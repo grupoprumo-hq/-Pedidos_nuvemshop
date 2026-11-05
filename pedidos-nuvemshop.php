@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       Pedidos Nuvemshop
  * Description:       Painel exclusivo do Café Brasil Gigante: lê somente os pedidos do produto (vendas e envios), avisa pedido pago e prepara a venda e a NF-e no eGestor. Acesso protegido por senha.
- * Version:           3.2.7
+ * Version:           3.2.8
  * Requires at least: 5.8
  * Requires PHP:      7.4
  * Author:            Café Zé Velho
@@ -21,7 +21,7 @@ require_once __DIR__ . '/includes/class-pn-bg.php';
 
 final class PN_Pedidos_Nuvemshop {
 
-	const VERSION      = '3.2.7';
+	const VERSION      = '3.2.8';
 	const DB_VERSION   = '4';
 	const OPT_SETTINGS = 'pn_settings';
 	const OPT_STATE    = 'pn_state3';
@@ -115,9 +115,7 @@ final class PN_Pedidos_Nuvemshop {
 
 	public static function activate() {
 		self::create_tables();
-		if ( ! wp_next_scheduled( self::CRON_HOOK ) ) {
-			wp_schedule_event( time() + 120, 'pn_30min', self::CRON_HOOK );
-		}
+		self::ensure_cron();
 		set_transient( 'pn_redirect_after_activation', 1, 60 );
 	}
 
@@ -146,16 +144,37 @@ final class PN_Pedidos_Nuvemshop {
 			update_option( 'pn_ver_seen', self::VERSION, false );
 			update_option( 'pn_ver_at', gmdate( 'Y-m-d H:i:s' ), false );
 		}
-		if ( ! wp_next_scheduled( self::CRON_HOOK ) ) {
-			wp_schedule_event( time() + 120, 'pn_30min', self::CRON_HOOK );
+		self::ensure_cron();
+	}
+
+	/** Horas entre as sincronizações automáticas (0.5, 1 ou 2). Padrão: 2. O botão manual continua sempre disponível. */
+	public static function sync_horas() {
+		$h = (string) get_option( 'pn_sync_horas', '2' );
+		return in_array( $h, array( '0.5', '1', '2' ), true ) ? $h : '2';
+	}
+
+	private static function sched_name() {
+		$m = array( '0.5' => 'pn_30min', '1' => 'pn_1h', '2' => 'pn_2h' );
+		return $m[ self::sync_horas() ];
+	}
+
+	/** Garante o agendamento com o intervalo escolhido (reagenda se mudou). */
+	public static function ensure_cron() {
+		$atual = wp_get_scheduled_event( self::CRON_HOOK );
+		$quer  = self::sched_name();
+		if ( $atual && $atual->schedule !== $quer ) {
+			wp_clear_scheduled_hook( self::CRON_HOOK );
+			$atual = false;
+		}
+		if ( ! $atual ) {
+			wp_schedule_event( time() + 120, $quer, self::CRON_HOOK );
 		}
 	}
 
 	public function add_cron_schedule( $schedules ) {
-		$schedules['pn_30min'] = array(
-			'interval' => 30 * MINUTE_IN_SECONDS,
-			'display'  => 'A cada 30 minutos (Pedidos Nuvemshop)',
-		);
+		$schedules['pn_30min'] = array( 'interval' => 30 * MINUTE_IN_SECONDS, 'display' => 'A cada 30 minutos (Pedidos Nuvemshop)' );
+		$schedules['pn_1h']    = array( 'interval' => HOUR_IN_SECONDS, 'display' => 'A cada 1 hora (Pedidos Nuvemshop)' );
+		$schedules['pn_2h']    = array( 'interval' => 2 * HOUR_IN_SECONDS, 'display' => 'A cada 2 horas (Pedidos Nuvemshop)' );
 		return $schedules;
 	}
 
@@ -420,6 +439,9 @@ final class PN_Pedidos_Nuvemshop {
 
 		$state = $this->get_state();
 		$res   = $this->sync_orders( isset( $state['orders'] ) ? $state['orders'] : array() );
+		if ( '' === $res['erro'] ) {
+			$this->refresh_open_orders();
+		}
 		$state['orders'] = $res['state'];
 		update_option( self::OPT_STATE, $state, false );
 		delete_transient( 'pn_sync_lock' );
@@ -511,6 +533,79 @@ final class PN_Pedidos_Nuvemshop {
 		return implode( ' ', $out );
 	}
 
+	/** Status do envio: usa o da(s) remessa(s) (o que a loja mostra); cai no campo antigo se não houver. */
+	private function envio_status( array $o ) {
+		$st = '';
+		if ( ! empty( $o['fulfillments'] ) && is_array( $o['fulfillments'] ) ) {
+			$f  = end( $o['fulfillments'] );
+			$st = is_array( $f ) && ! empty( $f['status'] ) ? (string) $f['status'] : '';
+		}
+		if ( '' === $st && ! empty( $o['fulfillment_status'] ) ) {
+			$st = (string) $o['fulfillment_status'];
+		}
+		if ( '' === $st && ! empty( $o['shipping_status'] ) ) {
+			$st = (string) $o['shipping_status'];
+		}
+		$st = sanitize_key( $st );
+		$m  = array( 'dispatched' => 'shipped', 'fulfilled' => 'shipped', 'in_transit' => 'shipped', 'ready_to_pack' => 'in_preparation' );
+		return isset( $m[ $st ] ) ? $m[ $st ] : $st;
+	}
+
+	private function envio_rastreio( array $o ) {
+		if ( ! empty( $o['shipping_tracking_number'] ) ) {
+			return (string) $o['shipping_tracking_number'];
+		}
+		foreach ( (array) ( isset( $o['fulfillments'] ) ? $o['fulfillments'] : array() ) as $f ) {
+			if ( is_array( $f ) && ! empty( $f['tracking_info']['code'] ) ) {
+				return (string) $f['tracking_info']['code'];
+			}
+			if ( is_array( $f ) && ! empty( $f['tracking_info']['number'] ) ) {
+				return (string) $f['tracking_info']['number'];
+			}
+		}
+		return '';
+	}
+
+	/**
+	 * Mudou o envio na loja? O pedido pode não ter a data de atualização alterada, então reconsulta
+	 * cada pedido do Brasil Gigante ainda não entregue (até 25 por rodada).
+	 */
+	private function refresh_open_orders() {
+		global $wpdb;
+		$t = self::table_orders();
+		// phpcs:ignore WordPress.DB
+		$ids = $wpdb->get_col( "SELECT order_id FROM {$t} WHERE status_pagamento = 'paid' AND status NOT IN ('cancelled') AND status_envio NOT IN ('delivered','closed') ORDER BY criado_em DESC LIMIT 25" );
+		$n   = 0;
+		foreach ( (array) $ids as $id ) {
+			$r = $this->api_get( 'orders/' . (int) $id );
+			if ( is_wp_error( $r ) || 200 !== (int) $r['code'] || ! is_array( $r['body'] ) || empty( $r['body']['id'] ) ) {
+				continue;
+			}
+			$o = $r['body'];
+			if ( ! PN_BG::order_has_bg( $o ) ) {
+				continue;
+			}
+			// Remessas (fulfillment orders): status e rastreio mais atuais. Pode exigir permissão no app.
+			$f = $this->api_get( 'orders/' . (int) $id . '/fulfillment-orders' );
+			if ( ! is_wp_error( $f ) ) {
+				if ( in_array( (int) $f['code'], array( 401, 403 ), true ) ) {
+					update_option( 'pn_envio_perm', 'negado', false );
+				} elseif ( 200 === (int) $f['code'] && is_array( $f['body'] ) ) {
+					update_option( 'pn_envio_perm', 'ok', false );
+					$o['fulfillments'] = array_map(
+						function ( $x ) {
+							return is_array( $x ) ? $x : array();
+						},
+						array_values( $f['body'] )
+					);
+				}
+			}
+			$this->upsert_order( $o );
+			$n++;
+		}
+		return $n;
+	}
+
 	private function upsert_order( array $o ) {
 		global $wpdb;
 
@@ -545,7 +640,7 @@ final class PN_Pedidos_Nuvemshop {
 				'atualizado_em'    => $this->to_mysql_gmt( isset( $o['updated_at'] ) ? $o['updated_at'] : '' ),
 				'status'           => isset( $o['status'] ) ? sanitize_key( $o['status'] ) : '',
 				'status_pagamento' => isset( $o['payment_status'] ) ? sanitize_key( $o['payment_status'] ) : '',
-				'status_envio'     => isset( $o['shipping_status'] ) ? sanitize_key( $o['shipping_status'] ) : '',
+				'status_envio'     => substr( $this->envio_status( $o ), 0, 20 ),
 				'total'            => isset( $o['total'] ) ? (float) $o['total'] : 0,
 				'subtotal'         => isset( $o['subtotal'] ) ? (float) $o['subtotal'] : 0,
 				'desconto'         => isset( $o['discount'] ) ? (float) $o['discount'] : 0,
@@ -557,7 +652,7 @@ final class PN_Pedidos_Nuvemshop {
 				'cidade'           => substr( sanitize_text_field( isset( $ad['city'] ) ? $ad['city'] : '' ), 0, 100 ),
 				'uf'               => substr( sanitize_text_field( isset( $ad['province'] ) ? $ad['province'] : '' ), 0, 60 ),
 				'servico_envio'    => substr( sanitize_text_field( isset( $o['shipping_option'] ) ? (string) $o['shipping_option'] : '' ), 0, 100 ),
-				'rastreio'         => substr( sanitize_text_field( isset( $o['shipping_tracking_number'] ) ? (string) $o['shipping_tracking_number'] : '' ), 0, 80 ),
+				'rastreio'         => substr( sanitize_text_field( $this->envio_rastreio( $o ) ), 0, 80 ),
 				'itens'            => wp_json_encode( $itens ),
 				'pacotes_250'      => $pac,
 				'pacotes_500'      => 0,
