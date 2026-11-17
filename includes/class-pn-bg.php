@@ -54,6 +54,48 @@ final class PN_BG {
 		return wp_parse_args( get_option( self::OPT_CFG, array() ), $d );
 	}
 
+	/** Os 3 cafés Brasil Gigante (travados no código). O código do eGestor de cada um é editável no painel. */
+	private static function produtos_fixos() {
+		return array(
+			array( 'nome' => 'Gourmet Moído 250g', 'product_id' => '378563445', 'variant_id' => '1631936515', 'sku' => 'BG-GOURMET-MOIDO-250' ),
+			array( 'nome' => 'Tradicional Moído 500g', 'product_id' => '381473266', 'variant_id' => '1640468839', 'sku' => 'BG-TRADICIONAL-MOIDO-500' ),
+			array( 'nome' => 'Gourmet em Grãos 250g', 'product_id' => '381479034', 'variant_id' => '1640484262', 'sku' => 'BG-GOURMET-GRAOS-250' ),
+		);
+	}
+
+	public static function catalogo() {
+		$c    = self::cfg();
+		$cods = isset( $c['egestor_cods'] ) && is_array( $c['egestor_cods'] ) ? $c['egestor_cods'] : array();
+		$out  = array();
+		foreach ( self::produtos_fixos() as $p ) {
+			$sku      = $p['sku'];
+			$p['cod'] = '';
+			if ( ! empty( $cods[ $sku ] ) ) {
+				$p['cod'] = (string) $cods[ $sku ];
+			} elseif ( 'BG-GOURMET-MOIDO-250' === $sku && ! empty( $c['egestor_cod_prod'] ) ) {
+				$p['cod'] = (string) $c['egestor_cod_prod']; // código já cadastrado na versão anterior.
+			}
+			$out[] = $p;
+		}
+		return $out;
+	}
+
+	/** Devolve a entrada do catálogo que corresponde à linha do pedido, ou null. */
+	public static function match_item( array $it ) {
+		foreach ( self::catalogo() as $p ) {
+			if ( isset( $it['product_id'] ) && (string) $it['product_id'] === $p['product_id'] ) {
+				return $p;
+			}
+			if ( isset( $it['variant_id'] ) && (string) $it['variant_id'] === $p['variant_id'] ) {
+				return $p;
+			}
+			if ( isset( $it['sku'] ) && '' !== (string) $it['sku'] && (string) $it['sku'] === $p['sku'] ) {
+				return $p;
+			}
+		}
+		return null;
+	}
+
 	private static function modos() {
 		return array(
 			'off'       => 'Desligado',
@@ -108,13 +150,7 @@ final class PN_BG {
 	}
 
 	private static function is_bg_item( array $it, array $c ) {
-		if ( ! empty( $c['product_id'] ) && isset( $it['product_id'] ) && (string) $it['product_id'] === (string) $c['product_id'] ) {
-			return true;
-		}
-		if ( ! empty( $c['variant_id'] ) && isset( $it['variant_id'] ) && (string) $it['variant_id'] === (string) $c['variant_id'] ) {
-			return true;
-		}
-		return ( ! empty( $c['sku'] ) && isset( $it['sku'] ) && (string) $it['sku'] === (string) $c['sku'] );
+		return null !== self::match_item( $it );
 	}
 
 	public static function run() {
@@ -185,9 +221,21 @@ final class PN_BG {
 		$c   = self::cfg();
 		$bg  = null;
 		$out = 0;
+		$linhas = array();
+		$qtd    = 0;
 		foreach ( (array) $o['products'] as $it ) {
-			if ( is_array( $it ) && self::is_bg_item( $it, $c ) ) {
-				$bg = $bg ? $bg : $it;
+			$m = is_array( $it ) ? self::match_item( $it ) : null;
+			if ( $m ) {
+				$bg       = $bg ? $bg : $it;
+				$q        = isset( $it['quantity'] ) ? (int) $it['quantity'] : 0;
+				$qtd     += $q;
+				$linhas[] = array(
+					'nome'       => $m['nome'],
+					'sku'        => ( isset( $it['sku'] ) && '' !== (string) $it['sku'] ) ? (string) $it['sku'] : $m['sku'],
+					'quantidade' => $q,
+					'unitario'   => isset( $it['price'] ) ? (float) $it['price'] : 0.0,
+					'cod'        => $m['cod'],
+				);
 			} else {
 				$out++;
 			}
@@ -225,9 +273,10 @@ final class PN_BG {
 			'origem'   => $utm,
 			'produto'  => array(
 				'sku'        => isset( $bg['sku'] ) ? (string) $bg['sku'] : '',
-				'quantidade' => isset( $bg['quantity'] ) ? (int) $bg['quantity'] : 0,
+				'quantidade' => $qtd,
 				'unitario'   => isset( $bg['price'] ) ? (float) $bg['price'] : 0.0,
 			),
+			'produtos' => $linhas,
 			'valores'  => array(
 				'produtos'  => isset( $o['subtotal'] ) ? (float) $o['subtotal'] : 0.0,
 				'frete'     => isset( $o['shipping_cost_customer'] ) ? (float) $o['shipping_cost_customer'] : 0.0,
@@ -284,10 +333,11 @@ final class PN_BG {
 			$L[] = 'Origem: ' . implode( ' | ', $o );
 		}
 		$L[] = '';
-		$L[] = 'PRODUTO';
-		$L[] = 'SKU: ' . ( $p['produto']['sku'] ? $p['produto']['sku'] : '-' );
-		$L[] = 'Quantidade: ' . $p['produto']['quantidade'];
-		$L[] = 'Valor unitário: ' . self::brl( $p['produto']['unitario'] );
+		$L[] = 'PRODUTOS';
+		foreach ( $p['produtos'] as $l ) {
+			$L[] = $l['quantidade'] . ' x ' . $l['nome'] . ' (SKU ' . ( $l['sku'] ? $l['sku'] : '-' ) . ') a ' . self::brl( $l['unitario'] ) . ' = ' . self::brl( $l['quantidade'] * $l['unitario'] );
+		}
+		$L[] = 'Total de pacotes: ' . $p['produto']['quantidade'];
 		$L[] = '';
 		$L[] = 'RESUMO FINANCEIRO';
 		$L[] = 'Produtos: ' . self::brl( $p['valores']['produtos'] );
@@ -399,6 +449,20 @@ final class PN_BG {
 			return array( $m );
 		}
 
+		$itens   = array();
+		$sem_cod = array();
+		foreach ( $p['produtos'] as $l ) {
+			if ( empty( $l['cod'] ) ) {
+				$sem_cod[] = $l['sku'];
+			}
+			$itens[] = array( 'cod_produto' => (int) $l['cod'], 'quant' => $l['quantidade'], 'preco' => $l['unitario'] );
+		}
+		if ( $sem_cod && 'simulado' !== $modo ) {
+			$m = 'eGestor: NÃO automático (sem o código do produto no eGestor para: ' . implode( ', ', $sem_cod ) . '). Preencha no painel e reenvie.';
+			self::log( $num, 'egestor', $m );
+			return array( $m );
+		}
+
 		$cbody = PN_EGestor::contact_body(
 			array(
 				'nome'       => $p['cliente']['nome'],
@@ -416,16 +480,14 @@ final class PN_BG {
 			'data'              => gmdate( 'Y-m-d', $p['pedido']['pago_em'] ? (int) strtotime( $p['pedido']['pago_em'] ) : time() ),
 			'frete'             => $p['valores']['frete'],
 			'observacao'        => 'Pedido Nuvemshop #' . $num,
-			'cod_produto'       => (int) $c['egestor_cod_prod'],
-			'quant'             => $p['produto']['quantidade'],
-			'preco'             => $p['produto']['unitario'],
+			'itens'             => $itens,
 			'total'             => $p['valores']['total'],
 			'cod_transportador' => (int) $c['egestor_cod_transp'],
 		);
 
 		if ( 'simulado' === $modo ) {
 			$vb = PN_EGestor::sale_body( $venda );
-			$m  = 'eGestor (simulado): acharia/criaria o contato com ' . count( $cbody ) . ' campos e criaria a venda com ' . count( $vb['produtos'] ) . ' item, frete ' . self::brl( $venda['frete'] ) . ', total ' . self::brl( $venda['total'] ) . ( 'venda_nfe' === $modo ? '; pediria a NF-e.' : '; NF-e não seria pedida neste modo.' );
+			$m  = 'eGestor (simulado): acharia/criaria o contato com ' . count( $cbody ) . ' campos e criaria a venda com ' . count( $vb['produtos'] ) . ' item(ns)' . ( $sem_cod ? ' [FALTA código eGestor de: ' . implode( ', ', $sem_cod ) . ']' : '' ) . ', frete ' . self::brl( $venda['frete'] ) . ', total ' . self::brl( $venda['total'] ) . ( 'venda_nfe' === $modo ? '; pediria a NF-e.' : '; NF-e não seria pedida neste modo.' );
 			self::log( $num, 'egestor', $m );
 			return array( $m );
 		}
@@ -592,6 +654,17 @@ final class PN_BG {
 		self::back( implode( ' ', $r['linhas'] ), $r['ok'] ? 'success' : 'error' );
 	}
 
+	private static function sanitize_cods( $raw ) {
+		$out = array();
+		foreach ( self::produtos_fixos() as $p ) {
+			$v = ( is_array( $raw ) && isset( $raw[ $p['sku'] ] ) ) ? preg_replace( '/\D/', '', (string) $raw[ $p['sku'] ] ) : '';
+			if ( '' !== $v ) {
+				$out[ $p['sku'] ] = $v;
+			}
+		}
+		return $out;
+	}
+
 	public static function handle_save() {
 		self::guard();
 		check_admin_referer( 'pn_bg_save' );
@@ -607,6 +680,7 @@ final class PN_BG {
 			'sku'                => self::cfg()['sku'],
 			'egestor_modo'       => ( isset( $in['egestor_modo'] ) && isset( $modos[ $in['egestor_modo'] ] ) ) ? $in['egestor_modo'] : 'off',
 			'egestor_cod_prod'   => preg_replace( '/\D/', '', isset( $in['egestor_cod_prod'] ) ? $in['egestor_cod_prod'] : '' ),
+			'egestor_cods'       => self::sanitize_cods( isset( $in['cods'] ) ? $in['cods'] : array() ),
 			'egestor_cod_transp' => preg_replace( '/\D/', '', isset( $in['egestor_cod_transp'] ) ? $in['egestor_cod_transp'] : '' ),
 		);
 		update_option( self::OPT_CFG, $new, false );
@@ -625,11 +699,14 @@ final class PN_BG {
 			'number'   => 'TESTE',
 			'id'       => '0',
 			'paid_at'  => gmdate( 'c' ),
-			'products' => array( array( 'product_id' => $c['product_id'], 'variant_id' => $c['variant_id'], 'sku' => $c['sku'], 'quantity' => 3, 'price' => '35.90' ) ),
-			'subtotal' => '107.70',
+			'products' => array(
+				array( 'product_id' => '378563445', 'variant_id' => '1631936515', 'sku' => 'BG-GOURMET-MOIDO-250', 'quantity' => 2, 'price' => '35.00' ),
+				array( 'product_id' => '381473266', 'variant_id' => '1640468839', 'sku' => 'BG-TRADICIONAL-MOIDO-500', 'quantity' => 1, 'price' => '38.00' ),
+			),
+			'subtotal' => '108.00',
 			'shipping_cost_customer' => '0.00',
 			'discount' => '0.00',
-			'total'    => '107.70',
+			'total'    => '108.00',
 			'shipping_option' => 'Jadlog Econômico',
 			'customer' => array( 'name' => 'Cliente de Teste', 'email' => 'teste@exemplo.com', 'phone' => '+5511999999999', 'identification' => '00000000000' ),
 			'shipping_address' => array( 'zipcode' => '30575360', 'address' => 'Rua de Teste', 'number' => '1', 'locality' => 'Centro', 'city' => 'Belo Horizonte', 'province' => 'MG' ),
@@ -832,8 +909,12 @@ final class PN_BG {
 		echo '<tr><th>Atualizações</th><td><span style="color:#1a7f37">🔒 Automáticas, repositório oficial (travado)</span><p class="description">Versão instalada: ' . esc_html( PN_Pedidos_Nuvemshop::VERSION ) . ( $up['latest'] ? ' · última publicada: ' . esc_html( $up['latest'] ) : '' ) . '</p>' . self::update_line( $up ) . '</td></tr>';
 		echo '</table>';
 		echo '<details style="margin:0 0 12px"><summary style="cursor:pointer">Avançado (eGestor e e-mail de teste)</summary><table class="form-table" role="presentation">';
-		echo '<tr><th>Produto Brasil Gigante</th><td>🔒 ID do produto <code>' . esc_html( $c['product_id'] ) . '</code> · variação <code>' . esc_html( $c['variant_id'] ) . '</code> · SKU <code>' . esc_html( $c['sku'] ) . '</code><p class="description">Travado: só o Brasil Gigante entra no painel.</p></td></tr>';
-		echo '<tr><th>Código do produto no eGestor</th><td><input type="text" size="8" name="pn_bg[egestor_cod_prod]" value="' . esc_attr( $c['egestor_cod_prod'] ) . '"> transportadora (opcional) <input type="text" size="8" name="pn_bg[egestor_cod_transp]" value="' . esc_attr( $c['egestor_cod_transp'] ) . '"></td></tr>';
+		echo '<tr><th>Cafés Brasil Gigante</th><td>🔒 <table class="widefat striped" style="max-width:760px"><thead><tr><th>Café</th><th>Produto / variação</th><th>SKU</th><th>Código no eGestor</th></tr></thead><tbody>';
+		foreach ( self::catalogo() as $cp ) {
+			echo '<tr><td>' . esc_html( $cp['nome'] ) . '</td><td><code>' . esc_html( $cp['product_id'] ) . '</code> / <code>' . esc_html( $cp['variant_id'] ) . '</code></td><td><code>' . esc_html( $cp['sku'] ) . '</code></td><td><input type="text" size="8" name="pn_bg[cods][' . esc_attr( $cp['sku'] ) . ']" value="' . esc_attr( $cp['cod'] ) . '"></td></tr>';
+		}
+		echo '</tbody></table><p class="description">Travado: só estes 3 cafés entram no painel. O código do eGestor de cada um é obrigatório para criar a venda automática.</p></td></tr>';
+		echo '<tr><th>Transportadora no eGestor</th><td><input type="text" size="8" name="pn_bg[egestor_cod_transp]" value="' . esc_attr( $c['egestor_cod_transp'] ) . '"> (opcional)</td></tr>';
 		echo '<tr><th>E-mail do comprador de teste</th><td><input type="email" class="regular-text" name="pn_bg[email_teste]" value="' . esc_attr( $c['email_teste'] ) . '"><p class="description">Pedido com este e-mail é marcado como teste e não aciona o eGestor.</p></td></tr>';
 		echo '</table></details>';
 		submit_button( 'Salvar', 'primary', 'submit', false );

@@ -140,20 +140,23 @@ final class PN_EGestor {
 	}
 
 	public static function sale_body( array $v ) {
+		$itens = ( isset( $v['itens'] ) && is_array( $v['itens'] ) ) ? $v['itens'] : array( array( 'cod_produto' => $v['cod_produto'], 'quant' => $v['quant'], 'preco' => $v['preco'] ) );
+		$prod  = array();
+		foreach ( $itens as $i ) {
+			$prod[] = array(
+				'codProduto' => (int) $i['cod_produto'],
+				'quant'      => (int) $i['quant'],
+				'preco'      => round( (float) $i['preco'], 2 ),
+				'vDesc'      => 0,
+			);
+		}
 		$body = array(
 			'codContato'  => (int) $v['cod_contato'],
 			'dtVenda'     => $v['data'],
 			'situacao'    => 50,
 			'valorFrete'  => round( (float) $v['frete'], 2 ),
 			'customizado' => array( 'xCampo1' => $v['observacao'] ),
-			'produtos'    => array(
-				array(
-					'codProduto' => (int) $v['cod_produto'],
-					'quant'      => (int) $v['quant'],
-					'preco'      => round( (float) $v['preco'], 2 ),
-					'vDesc'      => 0,
-				),
-			),
+			'produtos'    => $prod,
 			'financeiros' => array(
 				array(
 					'dtVenc' => $v['data'],

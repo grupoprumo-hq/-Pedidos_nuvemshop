@@ -12,7 +12,7 @@ Painel exclusivo do Café Brasil Gigante: lê somente os pedidos do produto, mos
 4. Clique em "Sincronizar agora". Depois disso a sincronização roda sozinha a cada 30 minutos.
 
 == O que o plugin acessa ==
-Somente pedidos com o produto Brasil Gigante. Produtos, clientes, cupons e demais dados da loja são bloqueados no código.
+Somente pedidos com os 3 cafés Brasil Gigante (Gourmet Moído 250g, Tradicional Moído 500g e Gourmet em Grãos 250g). Produtos, clientes, cupons e demais dados da loja são bloqueados no código.
 Não grava CPF, e-mail, telefone nem endereço completo (nome mascarado).
 
 == eGestor ==
