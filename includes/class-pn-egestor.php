@@ -17,7 +17,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 final class PN_EGestor {
 
-	const BASE      = 'https://v4.egestor.com.br/api';
+	const BASE      = 'https://api.egestor.com.br/api';
 	const TOKEN_KEY = 'pn_egestor_access';
 
 	public static function has_credentials() {

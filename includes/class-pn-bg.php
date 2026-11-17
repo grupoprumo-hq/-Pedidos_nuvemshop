@@ -101,7 +101,8 @@ final class PN_BG {
 			'off'       => 'Desligado',
 			'simulado'  => 'Simulado (não chama o eGestor, só registra o que faria)',
 			'venda'     => 'Criar contato e venda no eGestor (sem emitir nota)',
-			'venda_nfe' => 'Criar venda e pedir a emissão da NF-e',
+			'venda_nfe_rascunho' => 'Criar venda e gerar a NF-e como RASCUNHO (não envia à SEFAZ; revisar e transmitir no eGestor)',
+			'venda_nfe' => 'Criar venda e emitir a NF-e (envia à SEFAZ)',
 		);
 	}
 
@@ -487,7 +488,7 @@ final class PN_BG {
 
 		if ( 'simulado' === $modo ) {
 			$vb = PN_EGestor::sale_body( $venda );
-			$m  = 'eGestor (simulado): acharia/criaria o contato com ' . count( $cbody ) . ' campos e criaria a venda com ' . count( $vb['produtos'] ) . ' item(ns)' . ( $sem_cod ? ' [FALTA código eGestor de: ' . implode( ', ', $sem_cod ) . ']' : '' ) . ', frete ' . self::brl( $venda['frete'] ) . ', total ' . self::brl( $venda['total'] ) . ( 'venda_nfe' === $modo ? '; pediria a NF-e.' : '; NF-e não seria pedida neste modo.' );
+			$m  = 'eGestor (simulado): acharia/criaria o contato com ' . count( $cbody ) . ' campos e criaria a venda com ' . count( $vb['produtos'] ) . ' item(ns)' . ( $sem_cod ? ' [FALTA código eGestor de: ' . implode( ', ', $sem_cod ) . ']' : '' ) . ', frete ' . self::brl( $venda['frete'] ) . ', total ' . self::brl( $venda['total'] ) . ( 'venda_nfe' === $modo ? '; emitiria a NF-e.' : ( 'venda_nfe_rascunho' === $modo ? '; geraria a NF-e como rascunho.' : '; NF-e não seria pedida neste modo.' ) );
 			self::log( $num, 'egestor', $m );
 			return array( $m );
 		}
@@ -538,8 +539,9 @@ final class PN_BG {
 		$L[] = 'eGestor: venda criada (código ' . $reg['venda'] . ').';
 
 		// 3) NF-e.
-		if ( 'venda_nfe' === $modo && empty( $reg['nfe_pedida'] ) ) {
-			$r = PN_EGestor::request( 'POST', 'v1/vendas/' . (int) $reg['venda'] . '/gerarNfe', array(), array( 'enviar' => true ) );
+		if ( in_array( $modo, array( 'venda_nfe', 'venda_nfe_rascunho' ), true ) && empty( $reg['nfe_pedida'] ) ) {
+			$enviar = ( 'venda_nfe' === $modo );
+			$r      = PN_EGestor::request( 'POST', 'v1/vendas/' . (int) $reg['venda'] . '/gerarNfe', array(), array( 'enviar' => $enviar, 'contigOffline' => false ) );
 			if ( is_wp_error( $r ) || ! in_array( $r['code'], array( 200, 201 ), true ) ) {
 				$m = 'eGestor: NF-e NÃO emitida (' . PN_EGestor::err( $r ) . '). Emitir pelo eGestor.';
 				self::log( $num, 'egestor', $m );
@@ -547,7 +549,7 @@ final class PN_BG {
 				return array_merge( $L, array( $m ) );
 			}
 			$reg['nfe_pedida'] = 1;
-			$L[]               = 'eGestor: emissão da NF-e solicitada. O resultado (autorizada ou rejeitada) chega em outro aviso.';
+			$L[]               = $enviar ? 'eGestor: emissão da NF-e solicitada. O resultado (autorizada ou rejeitada) chega em outro aviso.' : 'eGestor: NF-e gerada como rascunho (código ' . (int) ( isset( $r['body']['codNota'] ) ? $r['body']['codNota'] : 0 ) . '). Revisar e transmitir pelo eGestor.';
 		}
 
 		self::save_reg( $num, $reg );
