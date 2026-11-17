@@ -17,7 +17,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 final class PN_EGestor {
 
-	const BASE      = 'https://api.egestor.com.br/api';
+	const BASE      = 'https://v4.egestor.com.br/api';
 	const TOKEN_KEY = 'pn_egestor_access';
 
 	const OPT_TOKEN = 'pn_egestor_token';
@@ -65,7 +65,8 @@ final class PN_EGestor {
 		$code = (int) wp_remote_retrieve_response_code( $resp );
 		$json = json_decode( wp_remote_retrieve_body( $resp ), true );
 		if ( 200 !== $code || empty( $json['access_token'] ) ) {
-			return new WP_Error( 'pn_eg_auth', 'Login no eGestor falhou (HTTP ' . $code . ').' );
+			$em = ( is_array( $json ) && ! empty( $json['errMsg'] ) && is_string( $json['errMsg'] ) ) ? ': ' . mb_substr( $json['errMsg'], 0, 160 ) : '';
+			return new WP_Error( 'pn_eg_auth', 'Login no eGestor falhou (HTTP ' . $code . $em . ').' );
 		}
 		set_transient( self::TOKEN_KEY, (string) $json['access_token'], 13 * MINUTE_IN_SECONDS );
 		return (string) $json['access_token'];
@@ -110,7 +111,7 @@ final class PN_EGestor {
 			return $r->get_error_message();
 		}
 		$msg = '';
-		foreach ( array( 'message', 'mensagem', 'error', 'erro' ) as $k ) {
+		foreach ( array( 'errMsg', 'message', 'mensagem', 'error', 'erro' ) as $k ) {
 			if ( ! empty( $r['body'][ $k ] ) && is_string( $r['body'][ $k ] ) ) {
 				$msg = $r['body'][ $k ];
 				break;
