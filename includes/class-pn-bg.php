@@ -63,6 +63,13 @@ final class PN_BG {
 		);
 	}
 
+	/** Códigos dos cafés no eGestor (cadastro de 17/11/2026). Podem ser trocados no painel. */
+	const COD_EGESTOR_PADRAO = array(
+		'BG-GOURMET-MOIDO-250'     => 9,
+		'BG-GOURMET-GRAOS-250'     => 10,
+		'BG-TRADICIONAL-MOIDO-500' => 11,
+	);
+
 	public static function catalogo() {
 		$c    = self::cfg();
 		$cods = isset( $c['egestor_cods'] ) && is_array( $c['egestor_cods'] ) ? $c['egestor_cods'] : array();
@@ -74,6 +81,8 @@ final class PN_BG {
 				$p['cod'] = (string) $cods[ $sku ];
 			} elseif ( 'BG-GOURMET-MOIDO-250' === $sku && ! empty( $c['egestor_cod_prod'] ) ) {
 				$p['cod'] = (string) $c['egestor_cod_prod']; // código já cadastrado na versão anterior.
+			} elseif ( isset( self::COD_EGESTOR_PADRAO[ $sku ] ) ) {
+				$p['cod'] = (string) self::COD_EGESTOR_PADRAO[ $sku ]; // códigos cadastrados no eGestor da Zé Velho.
 			}
 			$out[] = $p;
 		}
