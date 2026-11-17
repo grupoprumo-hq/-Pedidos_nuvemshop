@@ -29,6 +29,7 @@ final class PN_BG {
 		if ( is_admin() ) {
 			add_action( 'admin_post_pn_bg_save', array( __CLASS__, 'handle_save' ) );
 			add_action( 'admin_post_pn_bg_test', array( __CLASS__, 'handle_test' ) );
+			add_action( 'admin_post_pn_bg_egtest', array( __CLASS__, 'handle_egtest' ) );
 			add_action( 'admin_post_pn_bg_resend', array( __CLASS__, 'handle_resend' ) );
 			add_action( 'admin_post_pn_bg_conn', array( __CLASS__, 'handle_conn' ) );
 			add_action( 'admin_post_pn_bg_sync', array( __CLASS__, 'handle_sync' ) );
@@ -696,10 +697,47 @@ final class PN_BG {
 		);
 		update_option( self::OPT_CFG, $new, false );
 
+		// Token do eGestor: só grava se vier preenchido; nunca é exibido de volta.
+		$tk = isset( $_POST['pn_egestor_token'] ) ? trim( (string) wp_unslash( $_POST['pn_egestor_token'] ) ) : ''; // phpcs:ignore WordPress.Security.ValidatedSanitizedInput
+		if ( ! empty( $_POST['pn_egestor_token_remover'] ) ) {
+			delete_option( PN_EGestor::OPT_TOKEN );
+			delete_transient( PN_EGestor::TOKEN_KEY );
+		} elseif ( '' !== $tk ) {
+			if ( preg_match( '/^[A-Za-z0-9._\-+\/=]{20,2000}$/', $tk ) ) {
+				update_option( PN_EGestor::OPT_TOKEN, $tk, false );
+				delete_transient( PN_EGestor::TOKEN_KEY );
+			} else {
+				self::back( 'Token do eGestor com formato inválido. Cole o token inteiro, sem espaços.', 'error' );
+			}
+		}
+
 		$hh = isset( $_POST['pn_sync_horas'] ) ? sanitize_text_field( wp_unslash( $_POST['pn_sync_horas'] ) ) : '2'; // phpcs:ignore WordPress.Security.NonceVerification
 		update_option( 'pn_sync_horas', in_array( $hh, array( '0.5', '1', '2' ), true ) ? $hh : '2', false );
 		PN_Pedidos_Nuvemshop::ensure_cron();
 		self::back( 'Configurações salvas.' );
+	}
+
+	/** Testa a conexão com o eGestor (só leitura: GET /empresa). Não cria venda nem nota. */
+	public static function handle_egtest() {
+		self::guard();
+		check_admin_referer( 'pn_bg_egtest' );
+		if ( ! PN_EGestor::has_credentials() ) {
+			self::back( 'eGestor: token não informado.', 'error' );
+		}
+		delete_transient( PN_EGestor::TOKEN_KEY );
+		$r = PN_EGestor::request( 'GET', 'v1/empresa' );
+		if ( is_wp_error( $r ) || 200 !== $r['code'] ) {
+			self::back( 'eGestor: conexão falhou (' . PN_EGestor::err( $r ) . ').', 'error' );
+		}
+		$b    = $r['body'];
+		$nome = '';
+		foreach ( array( 'nome', 'razaoSocial', 'fantasia' ) as $k ) {
+			if ( ! empty( $b[ $k ] ) && is_string( $b[ $k ] ) ) {
+				$nome = $b[ $k ];
+				break;
+			}
+		}
+		self::back( 'eGestor: conexão OK' . ( '' !== $nome ? ' (empresa: ' . $nome . ')' : '' ) . '. Nenhuma venda ou nota foi criada.', 'success' );
 	}
 
 	public static function handle_test() {
@@ -916,7 +954,11 @@ final class PN_BG {
 		foreach ( self::modos() as $k => $lab ) {
 			echo '<option value="' . esc_attr( $k ) . '"' . selected( $c['egestor_modo'], $k, false ) . '>' . esc_html( $lab ) . '</option>';
 		}
-		echo '</select><p class="description">Credencial do eGestor: ' . ( PN_EGestor::has_credentials() ? 'definida' : 'não definida' ) . '. Comece em "Simulado".</p></td></tr>';
+		echo '</select><p class="description">Comece em "Simulado".</p></td></tr>';
+		$tem = PN_EGestor::has_credentials();
+		echo '<tr><th>Token do eGestor</th><td><input type="password" class="regular-text" name="pn_egestor_token" value="" autocomplete="new-password" placeholder="' . ( $tem ? 'token salvo — deixe em branco para manter' : 'cole o token (eGestor › Configurações › API)' ) . '"> ';
+		echo '<label><input type="checkbox" name="pn_egestor_token_remover" value="1"> remover token salvo</label>';
+		echo '<p class="description">Status: ' . ( $tem ? '<strong>token definido</strong>' . ( ( defined( 'PN_EGESTOR_PERSONAL_TOKEN' ) && PN_EGESTOR_PERSONAL_TOKEN ) ? ' (via wp-config.php)' : '' ) : 'não definido' ) . '. O token fica só neste site, nunca é exibido e não faz parte do plugin.</p></td></tr>';
 		echo '<tr><th>Atualizações</th><td><span style="color:#1a7f37">🔒 Automáticas, repositório oficial (travado)</span><p class="description">Versão instalada: ' . esc_html( PN_Pedidos_Nuvemshop::VERSION ) . ( $up['latest'] ? ' · última publicada: ' . esc_html( $up['latest'] ) : '' ) . '</p>' . self::update_line( $up ) . '</td></tr>';
 		echo '</table>';
 		echo '<details style="margin:0 0 12px"><summary style="cursor:pointer">Avançado (eGestor e e-mail de teste)</summary><table class="form-table" role="presentation">';
@@ -932,6 +974,7 @@ final class PN_BG {
 		echo '</form>';
 		echo '<p style="margin-top:12px">';
 		self::postform( 'pn_bg_test', 'pn_bg_test', 'Enviar aviso de teste' );
+		self::postform( 'pn_bg_egtest', 'pn_bg_egtest', 'Testar conexão com o eGestor' );
 		echo '<form method="post" action="' . esc_url( admin_url( 'admin-post.php' ) ) . '" style="display:inline-block"><input type="hidden" name="action" value="pn_bg_resend">';
 		wp_nonce_field( 'pn_bg_resend' );
 		echo '<input type="text" name="pn_num" size="8" placeholder="Nº do pedido"> <button type="submit" class="button">Reprocessar pedido pago</button></form>';

@@ -20,8 +20,19 @@ final class PN_EGestor {
 	const BASE      = 'https://api.egestor.com.br/api';
 	const TOKEN_KEY = 'pn_egestor_access';
 
+	const OPT_TOKEN = 'pn_egestor_token';
+
+	/** Token pessoal: constante do wp-config.php tem prioridade; senão o salvo no painel do plugin. */
+	public static function token() {
+		if ( defined( 'PN_EGESTOR_PERSONAL_TOKEN' ) && PN_EGESTOR_PERSONAL_TOKEN ) {
+			return (string) PN_EGESTOR_PERSONAL_TOKEN;
+		}
+		$t = get_option( self::OPT_TOKEN, '' );
+		return is_string( $t ) ? $t : '';
+	}
+
 	public static function has_credentials() {
-		return defined( 'PN_EGESTOR_PERSONAL_TOKEN' ) && PN_EGESTOR_PERSONAL_TOKEN;
+		return '' !== self::token();
 	}
 
 	/** access_token vale 15 minutos; guarda por 13. */
@@ -31,13 +42,13 @@ final class PN_EGestor {
 			return $t;
 		}
 		if ( ! self::has_credentials() ) {
-			return new WP_Error( 'pn_eg_cred', 'Credencial do eGestor não definida (PN_EGESTOR_PERSONAL_TOKEN no wp-config.php).' );
+			return new WP_Error( 'pn_eg_cred', 'Token do eGestor não informado (painel do plugin ou PN_EGESTOR_PERSONAL_TOKEN no wp-config.php).' );
 		}
 		$body = apply_filters(
 			'pn_egestor_token_body',
 			array(
 				'grant_type'     => 'personal',
-				'personal_token' => (string) PN_EGESTOR_PERSONAL_TOKEN,
+				'personal_token' => self::token(),
 			)
 		);
 		$resp = wp_remote_post(
