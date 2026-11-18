@@ -92,6 +92,52 @@ final class PN_EGestor {
 		return (string) $json['access_token'];
 	}
 
+	/** Limpa o que veio da colagem (espaços, quebras de linha, aspas). */
+	public static function clean_token( $raw ) {
+		return preg_replace( '/[\s"\']+/', '', (string) $raw );
+	}
+
+	/**
+	 * Testa um token SEM salvar. Tenta também com o "=" final (padding) caso tenha se perdido na cópia.
+	 *
+	 * @return array{ok:bool,token:string,msg:string}
+	 */
+	public static function check_token( $raw ) {
+		$base = self::clean_token( $raw );
+		if ( ! preg_match( '/^[A-Za-z0-9._\-+\/=]{20,2000}$/', $base ) ) {
+			return array( 'ok' => false, 'token' => $base, 'msg' => 'Formato inválido (' . strlen( $base ) . ' caracteres). Cole o token inteiro.' );
+		}
+		$cand = array( $base );
+		if ( '=' !== substr( $base, -1 ) ) {
+			$cand[] = $base . '=';
+			$cand[] = $base . '==';
+		}
+		$msg = '';
+		foreach ( $cand as $tk ) {
+			$resp = wp_remote_post(
+				self::BASE . '/oauth/access_token',
+				array(
+					'timeout' => 20,
+					'headers' => array( 'Content-Type' => 'application/json', 'Accept' => 'application/json' ),
+					'body'    => wp_json_encode( array( 'grant_type' => 'personal', 'personal_token' => $tk ) ),
+				)
+			);
+			if ( is_wp_error( $resp ) ) {
+				return array( 'ok' => false, 'token' => $base, 'msg' => 'Não consegui falar com o eGestor: ' . $resp->get_error_message() );
+			}
+			$code = (int) wp_remote_retrieve_response_code( $resp );
+			$json = json_decode( wp_remote_retrieve_body( $resp ), true );
+			if ( 200 === $code && ! empty( $json['access_token'] ) ) {
+				return array( 'ok' => true, 'token' => $tk, 'msg' => 'O eGestor aceitou o login (' . strlen( $tk ) . ' caracteres).' );
+			}
+			$msg = ( is_array( $json ) && ! empty( $json['errMsg'] ) && is_string( $json['errMsg'] ) ) ? mb_substr( $json['errMsg'], 0, 160 ) : 'HTTP ' . $code;
+			if ( 400 !== $code ) {
+				break;
+			}
+		}
+		return array( 'ok' => false, 'token' => $base, 'msg' => $msg . ' (' . strlen( $base ) . ' caracteres, termina em "' . substr( $base, -3 ) . '")' );
+	}
+
 	/**
 	 * @return array|WP_Error array( code, body )
 	 */

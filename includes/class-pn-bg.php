@@ -30,6 +30,7 @@ final class PN_BG {
 			add_action( 'admin_post_pn_bg_save', array( __CLASS__, 'handle_save' ) );
 			add_action( 'admin_post_pn_bg_test', array( __CLASS__, 'handle_test' ) );
 			add_action( 'admin_post_pn_bg_egtest', array( __CLASS__, 'handle_egtest' ) );
+			add_action( 'wp_ajax_pn_bg_egcheck', array( __CLASS__, 'ajax_egcheck' ) );
 			add_action( 'admin_post_pn_bg_resend', array( __CLASS__, 'handle_resend' ) );
 			add_action( 'admin_post_pn_bg_conn', array( __CLASS__, 'handle_conn' ) );
 			add_action( 'admin_post_pn_bg_sync', array( __CLASS__, 'handle_sync' ) );
@@ -698,7 +699,7 @@ final class PN_BG {
 		update_option( self::OPT_CFG, $new, false );
 
 		// Token do eGestor: só grava se vier preenchido; nunca é exibido de volta.
-		$tk = isset( $_POST['pn_egestor_token'] ) ? trim( (string) wp_unslash( $_POST['pn_egestor_token'] ) ) : ''; // phpcs:ignore WordPress.Security.ValidatedSanitizedInput
+		$tk = isset( $_POST['pn_egestor_token'] ) ? PN_EGestor::clean_token( wp_unslash( $_POST['pn_egestor_token'] ) ) : ''; // phpcs:ignore WordPress.Security.ValidatedSanitizedInput
 		if ( ! empty( $_POST['pn_egestor_token_remover'] ) ) {
 			delete_option( PN_EGestor::OPT_TOKEN );
 			delete_transient( PN_EGestor::TOKEN_KEY );
@@ -717,10 +718,31 @@ final class PN_BG {
 		self::back( 'Configurações salvas.' );
 	}
 
+	/** Valida o token enquanto é colado (não salva nada). */
+	public static function ajax_egcheck() {
+		check_ajax_referer( 'pn_bg_egcheck', 'n' );
+		if ( ! current_user_can( 'manage_options' ) || ! PN_Gate::is_unlocked() ) {
+			wp_send_json_error( array( 'msg' => 'Painel bloqueado.' ) );
+		}
+		$raw = isset( $_POST['t'] ) ? wp_unslash( $_POST['t'] ) : ''; // phpcs:ignore WordPress.Security.ValidatedSanitizedInput
+		$r   = PN_EGestor::check_token( $raw );
+		wp_send_json_success( array( 'ok' => $r['ok'], 'msg' => $r['msg'] ) );
+	}
+
 	/** Testa a conexão com o eGestor (só leitura: GET /empresa). Não cria venda nem nota. */
 	public static function handle_egtest() {
 		self::guard();
 		check_admin_referer( 'pn_bg_egtest' );
+		// Token colado no campo: valida e já salva (corrigindo o "=" final, se faltar).
+		$novo = isset( $_POST['pn_egestor_token'] ) ? PN_EGestor::clean_token( wp_unslash( $_POST['pn_egestor_token'] ) ) : ''; // phpcs:ignore WordPress.Security.ValidatedSanitizedInput
+		if ( '' !== $novo ) {
+			$chk = PN_EGestor::check_token( $novo );
+			if ( ! $chk['ok'] ) {
+				self::back( 'eGestor: token colado não foi aceito — ' . $chk['msg'], 'error' );
+			}
+			update_option( PN_EGestor::OPT_TOKEN, $chk['token'], false );
+			delete_transient( PN_EGestor::TOKEN_KEY );
+		}
 		if ( ! PN_EGestor::has_credentials() ) {
 			self::back( 'eGestor: token não informado.', 'error' );
 		}
@@ -958,6 +980,7 @@ final class PN_BG {
 		$tem = PN_EGestor::has_credentials();
 		echo '<tr><th>Token do eGestor</th><td><input type="password" class="regular-text" name="pn_egestor_token" value="" autocomplete="new-password" placeholder="' . ( $tem ? 'token salvo — deixe em branco para manter' : 'cole o token (eGestor › Configurações › API)' ) . '"> ';
 		echo '<label><input type="checkbox" name="pn_egestor_token_remover" value="1"> remover token salvo</label>';
+		echo '<p id="pn-egchk" style="margin:6px 0 0;font-weight:600"></p>';
 		echo '<p class="description">Status: ' . ( $tem ? '<strong>token definido</strong> (' . strlen( PN_EGestor::token() ) . ' caracteres, termina em ' . esc_html( substr( PN_EGestor::token(), -3 ) ) . ')' . ( ( defined( 'PN_EGESTOR_PERSONAL_TOKEN' ) && PN_EGESTOR_PERSONAL_TOKEN ) ? ' (via wp-config.php)' : '' ) : 'não definido' ) . '. O token fica só neste site, nunca é exibido e não faz parte do plugin.</p></td></tr>';
 		echo '<tr><th>Atualizações</th><td><span style="color:#1a7f37">🔒 Automáticas, repositório oficial (travado)</span><p class="description">Versão instalada: ' . esc_html( PN_Pedidos_Nuvemshop::VERSION ) . ( $up['latest'] ? ' · última publicada: ' . esc_html( $up['latest'] ) : '' ) . '</p>' . self::update_line( $up ) . '</td></tr>';
 		echo '</table>';
@@ -974,7 +997,17 @@ final class PN_BG {
 		echo '</form>';
 		echo '<p style="margin-top:12px">';
 		self::postform( 'pn_bg_test', 'pn_bg_test', 'Enviar aviso de teste' );
-		self::postform( 'pn_bg_egtest', 'pn_bg_egtest', 'Testar conexão com o eGestor' );
+		echo '<form id="pn-egtest-form" method="post" action="' . esc_url( admin_url( 'admin-post.php' ) ) . '" style="display:inline-block;margin:0 8px 0 0"><input type="hidden" name="action" value="pn_bg_egtest">';
+		wp_nonce_field( 'pn_bg_egtest' );
+		echo '<input type="hidden" name="pn_egestor_token" id="pn-egtest-tk" value=""><button type="submit" class="button">Testar conexão com o eGestor</button></form>';
+		$nonce_chk = wp_create_nonce( 'pn_bg_egcheck' );
+		echo '<script>(function(){var f=document.querySelector("input[name=pn_egestor_token]"),o=document.getElementById("pn-egchk"),h=document.getElementById("pn-egtest-tk"),tf=document.getElementById("pn-egtest-form"),t;if(!f||!o)return;'
+			. 'function chk(){var v=f.value.replace(/[\\s"\']+/g,"");if(!v){o.textContent="";return;}o.style.color="#555";o.textContent="Verificando no eGestor…";'
+			. 'var d=new FormData();d.append("action","pn_bg_egcheck");d.append("n","' . esc_js( $nonce_chk ) . '");d.append("t",v);'
+			. 'fetch(ajaxurl,{method:"POST",credentials:"same-origin",body:d}).then(function(r){return r.json()}).then(function(j){if(!j||!j.success){o.style.color="#b32d2e";o.textContent="✖ "+((j&&j.data&&j.data.msg)||"Não foi possível verificar.");return;}'
+			. 'if(j.data.ok){o.style.color="#1a7f37";o.textContent="✔ Token válido — "+j.data.msg+" Clique em \"Testar conexão\" (já salva) ou em Salvar.";}else{o.style.color="#b32d2e";o.textContent="✖ Token recusado: "+j.data.msg;}}).catch(function(){o.style.color="#b32d2e";o.textContent="✖ Falha ao verificar.";});}'
+			. 'f.addEventListener("paste",function(){setTimeout(chk,150)});f.addEventListener("input",function(){clearTimeout(t);t=setTimeout(chk,900)});'
+			. 'if(tf)tf.addEventListener("submit",function(){h.value=f.value;});})();</script>';
 		echo '<form method="post" action="' . esc_url( admin_url( 'admin-post.php' ) ) . '" style="display:inline-block"><input type="hidden" name="action" value="pn_bg_resend">';
 		wp_nonce_field( 'pn_bg_resend' );
 		echo '<input type="text" name="pn_num" size="8" placeholder="Nº do pedido"> <button type="submit" class="button">Reprocessar pedido pago</button></form>';
