@@ -129,8 +129,9 @@ final class PN_Updater {
 				}
 			}
 		}
-		if ( '' === $package && ! empty( $r['zipball_url'] ) ) {
-			$package = $r['zipball_url'];
+		if ( '' === $package ) {
+			// Zip do código-fonte direto do github.com (sem a API, que limita consultas por IP em hospedagem compartilhada).
+			$package = 'https://github.com/' . $this->repo . '/archive/refs/tags/' . rawurlencode( (string) $r['tag_name'] ) . '.zip';
 		}
 
 		$out = array(
