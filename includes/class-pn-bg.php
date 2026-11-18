@@ -727,7 +727,7 @@ final class PN_BG {
 		delete_transient( PN_EGestor::TOKEN_KEY );
 		$r = PN_EGestor::request( 'GET', 'v1/empresa' );
 		if ( is_wp_error( $r ) || 200 !== $r['code'] ) {
-			self::back( 'eGestor: conexão falhou (' . PN_EGestor::err( $r ) . ').', 'error' );
+			self::back( 'eGestor: conexão falhou (' . PN_EGestor::err( $r ) . ') Token salvo: ' . strlen( PN_EGestor::token() ) . ' caracteres, termina em "' . substr( PN_EGestor::token(), -3 ) . '".', 'error' );
 		}
 		$b    = $r['body'];
 		$nome = '';
@@ -958,7 +958,7 @@ final class PN_BG {
 		$tem = PN_EGestor::has_credentials();
 		echo '<tr><th>Token do eGestor</th><td><input type="password" class="regular-text" name="pn_egestor_token" value="" autocomplete="new-password" placeholder="' . ( $tem ? 'token salvo — deixe em branco para manter' : 'cole o token (eGestor › Configurações › API)' ) . '"> ';
 		echo '<label><input type="checkbox" name="pn_egestor_token_remover" value="1"> remover token salvo</label>';
-		echo '<p class="description">Status: ' . ( $tem ? '<strong>token definido</strong>' . ( ( defined( 'PN_EGESTOR_PERSONAL_TOKEN' ) && PN_EGESTOR_PERSONAL_TOKEN ) ? ' (via wp-config.php)' : '' ) : 'não definido' ) . '. O token fica só neste site, nunca é exibido e não faz parte do plugin.</p></td></tr>';
+		echo '<p class="description">Status: ' . ( $tem ? '<strong>token definido</strong> (' . strlen( PN_EGestor::token() ) . ' caracteres, termina em ' . esc_html( substr( PN_EGestor::token(), -3 ) ) . ')' . ( ( defined( 'PN_EGESTOR_PERSONAL_TOKEN' ) && PN_EGESTOR_PERSONAL_TOKEN ) ? ' (via wp-config.php)' : '' ) : 'não definido' ) . '. O token fica só neste site, nunca é exibido e não faz parte do plugin.</p></td></tr>';
 		echo '<tr><th>Atualizações</th><td><span style="color:#1a7f37">🔒 Automáticas, repositório oficial (travado)</span><p class="description">Versão instalada: ' . esc_html( PN_Pedidos_Nuvemshop::VERSION ) . ( $up['latest'] ? ' · última publicada: ' . esc_html( $up['latest'] ) : '' ) . '</p>' . self::update_line( $up ) . '</td></tr>';
 		echo '</table>';
 		echo '<details style="margin:0 0 12px"><summary style="cursor:pointer">Avançado (eGestor e e-mail de teste)</summary><table class="form-table" role="presentation">';
