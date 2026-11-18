@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       Pedidos Nuvemshop
  * Description:       Painel exclusivo do Café Brasil Gigante: lê somente os pedidos do produto (vendas e envios), avisa pedido pago e prepara a venda e a NF-e no eGestor. Acesso protegido por senha.
- * Version:           3.4.5
+ * Version:           3.5.0
  * Requires at least: 5.8
  * Requires PHP:      7.4
  * Author:            Café Zé Velho
@@ -21,7 +21,7 @@ require_once __DIR__ . '/includes/class-pn-bg.php';
 
 final class PN_Pedidos_Nuvemshop {
 
-	const VERSION      = '3.4.5';
+	const VERSION      = '3.5.0';
 	const DB_VERSION   = '4';
 	const OPT_SETTINGS = 'pn_settings';
 	const OPT_STATE    = 'pn_state3';
@@ -567,6 +567,33 @@ final class PN_Pedidos_Nuvemshop {
 		return '';
 	}
 
+	/** Procura o código de rastreio nas remessas do pedido (a API traz em tracking_info). */
+	private function rastreio_das_remessas( $order_id ) {
+		$r = $this->api_get( 'orders/' . (int) $order_id . '/fulfillment-orders' );
+		if ( is_wp_error( $r ) || 200 !== (int) $r['code'] || ! is_array( $r['body'] ) ) {
+			return '';
+		}
+		$achado = '';
+		$walk   = function ( $v ) use ( &$walk, &$achado ) {
+			if ( '' !== $achado || ! is_array( $v ) ) {
+				return;
+			}
+			if ( isset( $v['tracking_info'] ) && is_array( $v['tracking_info'] ) ) {
+				foreach ( array( 'code', 'number', 'tracking_number', 'tracking_code' ) as $k ) {
+					if ( ! empty( $v['tracking_info'][ $k ] ) && is_scalar( $v['tracking_info'][ $k ] ) ) {
+						$achado = (string) $v['tracking_info'][ $k ];
+						return;
+					}
+				}
+			}
+			foreach ( $v as $x ) {
+				$walk( $x );
+			}
+		};
+		$walk( $r['body'] );
+		return $achado;
+	}
+
 	/**
 	 * Mudou o envio na loja? O pedido pode não ter a data de atualização alterada, então reconsulta
 	 * cada pedido do Brasil Gigante ainda não entregue (até 25 por rodada).
@@ -575,7 +602,7 @@ final class PN_Pedidos_Nuvemshop {
 		global $wpdb;
 		$t = self::table_orders();
 		// phpcs:ignore WordPress.DB
-		$ids = $wpdb->get_col( "SELECT order_id FROM {$t} WHERE status_pagamento = 'paid' AND status NOT IN ('cancelled') AND status_envio NOT IN ('delivered','closed') ORDER BY criado_em DESC LIMIT 25" );
+		$ids = $wpdb->get_col( "SELECT order_id FROM {$t} WHERE status_pagamento = 'paid' AND status NOT IN ('cancelled') AND ( status_envio NOT IN ('delivered','closed') OR rastreio = '' ) ORDER BY criado_em DESC LIMIT 25" );
 		$n   = 0;
 		foreach ( (array) $ids as $id ) {
 			$r = $this->api_get( 'orders/' . (int) $id );
@@ -613,6 +640,12 @@ final class PN_Pedidos_Nuvemshop {
 			);
 		}
 
+		// Código de rastreio: do pedido; se vier vazio e já saiu para envio, busca nas remessas (fulfillment-orders).
+		$rast = $this->envio_rastreio( $o );
+		if ( '' === $rast && ! in_array( $this->envio_status( $o ), array( '', 'unpacked', 'unshipped', 'in_preparation', 'cancelled' ), true ) ) {
+			$rast = $this->rastreio_das_remessas( (int) $o['id'] );
+		}
+
 		$cust = ( isset( $o['customer'] ) && is_array( $o['customer'] ) ) ? $o['customer'] : array();
 		$nome = isset( $cust['name'] ) ? $cust['name'] : ( isset( $o['contact_name'] ) ? $o['contact_name'] : '' );
 		$ad   = ( isset( $o['shipping_address'] ) && is_array( $o['shipping_address'] ) ) ? $o['shipping_address'] : array();
@@ -638,7 +671,7 @@ final class PN_Pedidos_Nuvemshop {
 				'cidade'           => substr( sanitize_text_field( isset( $ad['city'] ) ? $ad['city'] : '' ), 0, 100 ),
 				'uf'               => substr( sanitize_text_field( isset( $ad['province'] ) ? $ad['province'] : '' ), 0, 60 ),
 				'servico_envio'    => substr( sanitize_text_field( isset( $o['shipping_option'] ) ? (string) $o['shipping_option'] : '' ), 0, 100 ),
-				'rastreio'         => substr( sanitize_text_field( $this->envio_rastreio( $o ) ), 0, 80 ),
+				'rastreio'         => substr( sanitize_text_field( $rast ), 0, 80 ),
 				'itens'            => wp_json_encode( $itens ),
 				'pacotes_250'      => $pac,
 				'pacotes_500'      => 0,
@@ -668,15 +701,62 @@ final class PN_Pedidos_Nuvemshop {
 		return $out;
 	}
 
-	public function bg_orders( $por_pagina, $pagina ) {
+	/** Pedidos para a tabela/CSV. $f: envio (unshipped|shipped|delivered), pag (pagamento), q (nº do pedido). $por_pagina 0 = todos. */
+	public function bg_orders( $por_pagina, $pagina, $f = array() ) {
 		global $wpdb;
-		$t      = self::table_orders();
-		$offset = max( 0, ( (int) $pagina - 1 ) * (int) $por_pagina );
+		$t     = self::table_orders();
+		$where = array( '1=1' );
+		$args  = array();
+		if ( ! empty( $f['envio'] ) ) {
+			if ( 'unshipped' === $f['envio'] ) {
+				$where[] = "status_envio IN ('unshipped','unpacked','in_preparation','packed','')";
+			} else {
+				$where[] = 'status_envio = %s';
+				$args[]  = sanitize_key( $f['envio'] );
+			}
+		}
+		if ( ! empty( $f['pag'] ) ) {
+			$where[] = 'status_pagamento = %s';
+			$args[]  = sanitize_key( $f['pag'] );
+		}
+		if ( ! empty( $f['q'] ) && ctype_digit( (string) $f['q'] ) ) {
+			$where[] = 'numero = %d';
+			$args[]  = (int) $f['q'];
+		}
+		$w = implode( ' AND ', $where );
 		// phpcs:disable WordPress.DB
-		$total = (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$t}" );
-		$rows  = $wpdb->get_results( $wpdb->prepare( "SELECT * FROM {$t} ORDER BY criado_em DESC LIMIT %d OFFSET %d", (int) $por_pagina, $offset ) );
+		$q_total = "SELECT COUNT(*) FROM {$t} WHERE {$w}";
+		$total   = (int) ( $args ? $wpdb->get_var( $wpdb->prepare( $q_total, $args ) ) : $wpdb->get_var( $q_total ) );
+		$q_rows  = "SELECT * FROM {$t} WHERE {$w} ORDER BY criado_em DESC";
+		if ( $por_pagina > 0 ) {
+			$q_rows .= ' LIMIT %d OFFSET %d';
+			$args[]  = (int) $por_pagina;
+			$args[]  = max( 0, ( (int) $pagina - 1 ) * (int) $por_pagina );
+		}
+		$rows = $args ? $wpdb->get_results( $wpdb->prepare( $q_rows, $args ) ) : $wpdb->get_results( $q_rows );
 		// phpcs:enable
 		return array( 'total' => $total, 'rows' => $rows ? $rows : array() );
+	}
+
+	/** Vendas por dia (pedidos pagos), últimos $dias dias, no fuso do site. */
+	public function bg_daily( $dias = 30 ) {
+		global $wpdb;
+		$t = self::table_orders();
+		// phpcs:ignore WordPress.DB
+		$rows = $wpdb->get_results( $wpdb->prepare( "SELECT criado_em, total, pacotes_250 FROM {$t} WHERE status_pagamento = 'paid' AND criado_em >= %s", gmdate( 'Y-m-d H:i:s', time() - ( $dias + 1 ) * DAY_IN_SECONDS ) ) );
+		$out  = array();
+		for ( $i = $dias - 1; $i >= 0; $i-- ) {
+			$out[ wp_date( 'Y-m-d', time() - $i * DAY_IN_SECONDS ) ] = array( 'n' => 0, 'pacotes' => 0, 'receita' => 0.0 );
+		}
+		foreach ( (array) $rows as $r ) {
+			$d = get_date_from_gmt( $r->criado_em, 'Y-m-d' );
+			if ( isset( $out[ $d ] ) ) {
+				$out[ $d ]['n']++;
+				$out[ $d ]['pacotes'] += (int) $r->pacotes_250;
+				$out[ $d ]['receita'] += (float) $r->total;
+			}
+		}
+		return $out;
 	}
 
 	public function bg_last_sync() {
