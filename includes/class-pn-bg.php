@@ -1020,6 +1020,7 @@ document.addEventListener("keydown",function(e){if(e.key==="Escape")close()});})
 		foreach ( $dias as $d ) {
 			$max = max( $max, (int) $d['pacotes'] );
 		}
+		$max = max( 4, (int) ( ceil( $max / 4 ) * 4 ) ); // escala em números inteiros.
 		$bw = ( $w - $pl - 8 ) / max( 1, $n );
 		$o  = '<svg class="pn-chart" viewBox="0 0 ' . $w . ' ' . $h . '" role="img" aria-label="Pacotes vendidos por dia nos últimos ' . (int) $n . ' dias">';
 		for ( $g = 0; $g <= 4; $g++ ) {
@@ -1191,7 +1192,7 @@ document.addEventListener("keydown",function(e){if(e.key==="Escape")close()});})
 				echo '<td class="num">' . esc_html( self::brl_s( $r->frete_cliente ) ) . '</td>';
 				echo '<td>' . esc_html( $r->servico_envio ? $r->servico_envio : '—' ) . '</td>';
 				echo '<td>' . self::envio_chip( $r->status_envio ) . '</td>'; // phpcs:ignore WordPress.Security.EscapeOutput
-				echo '<td>' . ( $r->rastreio ? '<code>' . esc_html( $r->rastreio ) . '</code>' : '<span style="color:#8c8f94">—</span>' ) . '</td>';
+				echo '<td>' . ( $r->rastreio ? '<code>' . esc_html( $r->rastreio ) . '</code>' : ( in_array( $r->status_envio, array( 'shipped', 'delivered' ), true ) ? '<span style="color:#8c8f94" title="A Nuvemshop não tem código de rastreio neste pedido (comum em pedidos de teste ou marcados como entregues manualmente).">sem código na loja</span>' : '<span style="color:#8c8f94">—</span>' ) ) . '</td>';
 				echo '<td>' . esc_html( trim( $r->cidade . ' ' . $r->uf ) ) . '</td>';
 				echo '<td>' . esc_html( $r->cliente_nome ) . '</td>';
 				echo '<td>' . self::egestor_chip( $r->numero, $reg, $modo ) . '</td></tr>'; // phpcs:ignore WordPress.Security.EscapeOutput
