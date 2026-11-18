@@ -44,26 +44,46 @@ final class PN_EGestor {
 		if ( ! self::has_credentials() ) {
 			return new WP_Error( 'pn_eg_cred', 'Token do eGestor não informado (painel do plugin ou PN_EGESTOR_PERSONAL_TOKEN no wp-config.php).' );
 		}
-		$body = apply_filters(
-			'pn_egestor_token_body',
-			array(
-				'grant_type'     => 'personal',
-				'personal_token' => self::token(),
-			)
-		);
-		$resp = wp_remote_post(
-			self::BASE . '/oauth/access_token',
-			array(
-				'timeout' => 20,
-				'headers' => array( 'Content-Type' => 'application/json', 'Accept' => 'application/json' ),
-				'body'    => wp_json_encode( $body ),
-			)
-		);
-		if ( is_wp_error( $resp ) ) {
-			return $resp;
+		// Se o "=" final (padding base64) se perdeu na cópia, tenta de novo com ele e corrige o token salvo.
+		$base = self::token();
+		$cand = array( $base );
+		if ( '=' !== substr( $base, -1 ) ) {
+			$cand[] = $base . '=';
+			$cand[] = $base . '==';
 		}
-		$code = (int) wp_remote_retrieve_response_code( $resp );
-		$json = json_decode( wp_remote_retrieve_body( $resp ), true );
+		$json = null;
+		$code = 0;
+		foreach ( $cand as $tk ) {
+			$body = apply_filters(
+				'pn_egestor_token_body',
+				array(
+					'grant_type'     => 'personal',
+					'personal_token' => $tk,
+				)
+			);
+			$resp = wp_remote_post(
+				self::BASE . '/oauth/access_token',
+				array(
+					'timeout' => 20,
+					'headers' => array( 'Content-Type' => 'application/json', 'Accept' => 'application/json' ),
+					'body'    => wp_json_encode( $body ),
+				)
+			);
+			if ( is_wp_error( $resp ) ) {
+				return $resp;
+			}
+			$code = (int) wp_remote_retrieve_response_code( $resp );
+			$json = json_decode( wp_remote_retrieve_body( $resp ), true );
+			if ( 200 === $code && ! empty( $json['access_token'] ) ) {
+				if ( $tk !== $base && ! ( defined( 'PN_EGESTOR_PERSONAL_TOKEN' ) && PN_EGESTOR_PERSONAL_TOKEN ) ) {
+					update_option( self::OPT_TOKEN, $tk, false );
+				}
+				break;
+			}
+			if ( 400 !== $code ) {
+				break;
+			}
+		}
 		if ( 200 !== $code || empty( $json['access_token'] ) ) {
 			$em = ( is_array( $json ) && ! empty( $json['errMsg'] ) && is_string( $json['errMsg'] ) ) ? ': ' . mb_substr( $json['errMsg'], 0, 160 ) : '';
 			return new WP_Error( 'pn_eg_auth', 'Login no eGestor falhou (HTTP ' . $code . $em . ').' );
