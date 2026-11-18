@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       Pedidos Nuvemshop
  * Description:       Painel exclusivo do Café Brasil Gigante: lê somente os pedidos do produto (vendas e envios), avisa pedido pago e prepara a venda e a NF-e no eGestor. Acesso protegido por senha.
- * Version:           3.5.1
+ * Version:           3.5.2
  * Requires at least: 5.8
  * Requires PHP:      7.4
  * Author:            Café Zé Velho
@@ -21,7 +21,7 @@ require_once __DIR__ . '/includes/class-pn-bg.php';
 
 final class PN_Pedidos_Nuvemshop {
 
-	const VERSION      = '3.5.1';
+	const VERSION      = '3.5.2';
 	const DB_VERSION   = '4';
 	const OPT_SETTINGS = 'pn_settings';
 	const OPT_STATE    = 'pn_state3';
@@ -463,6 +463,11 @@ final class PN_Pedidos_Nuvemshop {
 			$desde = gmdate( 'c', time() - self::DIAS_INICIAL * DAY_IN_SECONDS );
 		}
 
+		$corte = get_option( 'pn_cutoff', '' ); // data de corte (após "Zerar dados de teste"): nada anterior entra.
+		if ( '' !== $corte && strtotime( $corte . ' UTC' ) > strtotime( $desde ) ) {
+			$desde = gmdate( 'c', strtotime( $corte . ' UTC' ) );
+		}
+
 		$inicio = gmdate( 'c' );
 		$total  = 0;
 		$erro   = '';
@@ -622,6 +627,11 @@ final class PN_Pedidos_Nuvemshop {
 	private function upsert_order( array $o ) {
 		global $wpdb;
 
+		$corte = get_option( 'pn_cutoff', '' );
+		if ( '' !== $corte && isset( $o['created_at'] ) && $this->to_mysql_gmt( $o['created_at'] ) < $corte ) {
+			return; // pedido anterior ao corte (era de teste): não entra no painel.
+		}
+
 		$itens = array();
 		$pac   = 0;
 		$kg    = 0.0;
@@ -757,6 +767,17 @@ final class PN_Pedidos_Nuvemshop {
 			}
 		}
 		return $out;
+	}
+
+	/** Zera os dados do plugin (pedidos guardados, histórico e registro) e define o corte para só valer o que vier depois. */
+	public function bg_reset() {
+		global $wpdb;
+		$t = self::table_orders();
+		// phpcs:ignore WordPress.DB
+		$wpdb->query( "TRUNCATE TABLE {$t}" );
+		delete_option( self::OPT_STATE );
+		delete_transient( 'pn_sync_lock' );
+		update_option( 'pn_cutoff', gmdate( 'Y-m-d H:i:s' ), false );
 	}
 
 	public function bg_last_sync() {

@@ -30,6 +30,7 @@ final class PN_BG {
 			add_action( 'admin_post_pn_bg_save', array( __CLASS__, 'handle_save' ) );
 			add_action( 'admin_post_pn_bg_test', array( __CLASS__, 'handle_test' ) );
 			add_action( 'admin_post_pn_bg_egtest', array( __CLASS__, 'handle_egtest' ) );
+			add_action( 'admin_post_pn_bg_reset', array( __CLASS__, 'handle_reset' ) );
 			add_action( 'admin_post_pn_bg_export', array( __CLASS__, 'handle_export' ) );
 			add_action( 'wp_ajax_pn_bg_egcheck', array( __CLASS__, 'ajax_egcheck' ) );
 			add_action( 'admin_post_pn_bg_resend', array( __CLASS__, 'handle_resend' ) );
@@ -1047,6 +1048,21 @@ document.addEventListener("keydown",function(e){if(e.key==="Escape")close()});})
 		return $o . '</svg>';
 	}
 
+	/** Zera os dados de teste do plugin (não mexe na Nuvemshop nem no eGestor). Painel já desbloqueado + caixa de confirmação. */
+	public static function handle_reset() {
+		self::guard();
+		check_admin_referer( 'pn_bg_reset' );
+		if ( empty( $_POST['confirmo'] ) ) {
+			self::back( 'Não zerou: marque a caixa de confirmação.', 'error' );
+		}
+		PN_Pedidos_Nuvemshop::instance()->bg_reset();
+		delete_option( self::OPT_LOG );
+		delete_transient( 'pn_bg_lock' );
+		update_option( self::OPT_STATE, array( 'cursor' => gmdate( 'c', time() - 60 ), 'done' => array(), 'orders' => array() ), false );
+		self::log( '-', 'reset', 'Dados de teste zerados. Só valem pedidos feitos a partir de agora.' );
+		self::back( 'Pronto: pedidos, histórico e registro foram zerados. Só vão aparecer pedidos novos a partir de agora.' );
+	}
+
 	/** Baixa os pedidos em CSV (sem dados pessoais: nome já mascarado). */
 	public static function handle_export() {
 		self::guard();
@@ -1276,6 +1292,12 @@ document.addEventListener("keydown",function(e){if(e.key==="Escape")close()});})
 		echo '<input type="text" name="pn_num" size="8" placeholder="Nº do pedido"> <button type="submit" class="button">Reprocessar pedido pago</button></form>';
 		self::postform( 'pn_check_update', 'pn_check_update', 'Verificar atualização' );
 		echo '</div>';
+
+		self::section( 'Zerar dados de teste', 'Apaga do PLUGIN os pedidos guardados, o histórico e o registro, e passa a ignorar qualquer pedido anterior a este momento. Não apaga nada na Nuvemshop nem no eGestor, e mantém tokens e configurações. Use depois de terminar os testes, antes de começar a vender.' );
+		echo '<div class="pn-panel"><form method="post" action="' . esc_url( admin_url( 'admin-post.php' ) ) . '"><input type="hidden" name="action" value="pn_bg_reset">';
+		wp_nonce_field( 'pn_bg_reset' );
+		echo '<p style="margin-top:0"><label><input type="checkbox" name="confirmo" value="1"> Entendi: vai apagar os pedidos, o histórico e o registro <strong>do plugin</strong> (a Nuvemshop e o eGestor não são alterados).</label></p>';
+		echo '<button type="submit" class="button" style="color:#b32d2e;border-color:#b32d2e">Zerar dados de teste</button></form></div>';
 
 		// 6. Conexão com a Nuvemshop.
 		self::section( 'Conexão com a Nuvemshop', 'Loja e token usados para ler os pedidos. O token só precisa da permissão "Pedidos › Ler pedidos".' );
